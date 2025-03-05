@@ -1,0 +1,182 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./sauron.db"
+}
+
+model Events {
+  id         Int      @id @default(autoincrement())
+  event      String
+  details    String?
+  fromCol    String
+  withWhom   String?
+  date       String
+  calculatedDate DateTime?
+  territory  String   @default("Unknown Territory")
+  source     String   @default("extension")
+
+  // Foreign key to Characters
+  characterId    Int      // Reference to the character who sees the event
+  character      Characters @relation(fields: [characterId], references: [id])
+
+  createdAt      DateTime @default(now())
+}
+
+model Factions {
+  id   Int    @id @default(autoincrement())
+  name String @unique // Ensure each faction name is unique
+
+  // A faction can have many characters
+  characters Characters[]
+
+  // A faction can own private forums
+  forums Forums[]
+}
+
+model Characters {
+  id          Int      @id @default(autoincrement())
+  targetId    Int      @unique // Corresponds to `targetId` in the game
+  name        String
+  rank        String?
+  popularity  String?
+  role        String?
+  portraitUrl String?
+
+  // Foreign key to Factions
+  factionId Int?      // Nullable foreign key
+  faction   Factions? @relation(fields: [factionId], references: [id])
+
+  // Relationship to Events
+  events Events[] // A character can see multiple events
+
+  // Relationship to MDJHistory
+  mdjHistory MDJHistory[]
+
+  // Relationship to CharacterHistory
+  storyHistory CharacterHistory[]
+
+  // A character can create multiple topics
+  topics Topics[]
+
+  // A character can post multiple messages
+  messages Messages[]
+
+  // Relationship to CharacterLog
+  logs CharacterLog[] // A character can have multiple logs
+
+  // Relationship to Equipment
+  equipment Equipment[]
+
+  attributes CharacterAttributes?
+
+  createdAt   DateTime @default(now())
+  @@index([targetId])
+}
+
+model Equipment {
+  id          Int      @id @default(autoincrement())
+  name        String   // Name of the equipment
+  description String   // Description of the equipment
+  type        String   // Type of equipment (e.g., "weapon", "armor", etc.)
+  price       Int?     // Price of the equipment
+  imageUrl    String?  // Full image URL of the equipment
+  thumbnailUrl String? // Thumbnail image URL of the equipment
+
+  // Foreign key to Characters
+  characterId Int      // Character that owns this equipment
+  character   Characters @relation(fields: [characterId], references: [id])
+}
+
+model MDJHistory {
+  id          Int      @id @default(autoincrement())
+  characterId Int      // Foreign key to the Characters table
+  character   Characters @relation(fields: [characterId], references: [id])
+  mdj         String   // The message content
+  createdAt   DateTime @default(now()) // Timestamp of when the message was set
+}
+
+model CharacterHistory {
+  id             Int         @id @default(autoincrement())
+  characterId    Int         // Foreign key to the Characters table
+  character      Characters  @relation(fields: [characterId], references: [id])
+  story          String      // The story content
+  modifiedAt     DateTime    @default(now()) // Timestamp of the modification
+}
+
+model CharacterLog {
+  id          Int      @id @default(autoincrement())
+  characterId Int      // Foreign key to the Characters table
+  character   Characters @relation(fields: [characterId], references: [id])
+  attribute   String   // Name of the changed attribute (e.g., "cc", "pv")
+  oldValue    String?  // Previous value (store as a string to handle non-numeric values too)
+  newValue    String?  // New value
+  changedAt   DateTime @default(now()) // Timestamp of the change
+}
+
+model CharacterAttributes {
+  id          Int     @id @default(autoincrement())
+  characterId Int     @unique // Link to Characters table
+  character   Characters @relation(fields: [characterId], references: [id]) // Only this side specifies `fields` and `references`
+  cc          Int     // Capacité de Combat
+  ct          Int     // Capacité de Tir
+  f           Int     // Force
+  e           Int     // Endurance
+  agi         Int     // Agilité
+  pv          Int     // Points de Vie
+  pm          Int     // Points de Magie
+  fm          Int     // Force Mentale
+  m           Int     // Puissance magique
+  a           Int     // Actions
+  mvt         Int     // Mouvements
+  p           Int     // Perception
+  r           Int     // Récupération
+  rm          Int     // Récupération Magique
+  xp          Int     // Points d'expérience
+  createdAt   DateTime @default(now()) // Timestamp for record creation
+  updatedAt   DateTime @updatedAt      // Timestamp for last update
+}
+
+model Forums {
+  id        Int       @id @default(autoincrement())
+  name      String    // Name of the forum
+  link      String    @unique // Link to the forum
+  type      String    // Type of forum: 'RP' or 'Private'
+  factionId Int?      // Foreign key to Factions (nullable for RP forums)
+  faction   Factions? @relation(fields: [factionId], references: [id])
+
+  // A forum can have many topics
+  topics Topics[]
+}
+
+model Topics {
+  id        Int         @id @default(autoincrement())
+  name      String      // Name of the topic
+  link      String      @unique // Link to the topic
+  authorId  Int         // Foreign key to Characters (author of the topic)
+  author    Characters  @relation(fields: [authorId], references: [id])
+  forumId   Int         // Foreign key to Forums
+  forum     Forums      @relation(fields: [forumId], references: [id])
+
+  // A topic can have many messages
+  messages Messages[]
+}
+
+model Messages {
+  id          Int         @id @default(autoincrement())
+  content     String      // Content of the message
+  date        String      // Original date of the message
+  createdAt   DateTime    @default(now()) // Timestamp of when the message was inserted into the DB
+  characterId Int         // Foreign key to Characters (author of the message)
+  character   Characters  @relation(fields: [characterId], references: [id])
+  topicId     Int         // Foreign key to Topics
+  topic       Topics      @relation(fields: [topicId], references: [id])
+}
