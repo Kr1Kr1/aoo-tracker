@@ -27,12 +27,14 @@ export async function POST(req, context) {
     }
 
     const body = await req.json();
-    const { name, description, type, price, imageUrl, thumbnailUrl } = body;
-
-    if (!name || !type) {
-      logger.error("[API] Missing required fields in request body");
-      return new Response(JSON.stringify({ error: "Name and type are required for equipment" }), {
-        status: 400,
+    
+    // Handle both single item and array of items
+    const equipmentItems = Array.isArray(body.equipment) ? body.equipment : [body];
+    
+    if (equipmentItems.length === 0) {
+      logger.info("[API] No equipment items to process");
+      return new Response(JSON.stringify({ message: "No equipment items to process" }), {
+        status: 200,
         headers: corsHeaders(),
       });
     }
@@ -50,21 +52,42 @@ export async function POST(req, context) {
       });
     }
 
-    // Create a new equipment entry
-    const equipmentEntry = await prisma.equipment.create({
-      data: {
-        name,
-        description: description || "No description provided",
-        type,
-        price: price || null,
-        imageUrl: imageUrl || null,
-        thumbnailUrl: thumbnailUrl || null,
-        characterId: character.id,
-      },
-    });
+    const results = [];
+    const errors = [];
 
-    logger.info(`[API] Created new equipment for character with targetId ${parsedTargetId}: ${JSON.stringify(equipmentEntry)}`);
-    return new Response(JSON.stringify(equipmentEntry), {
+    // Process each equipment item
+    for (const item of equipmentItems) {
+      const { name, description, type, price, imageUrl, thumbnailUrl } = item;
+
+      if (!name || !type) {
+        errors.push({ item, error: "Name and type are required for equipment" });
+        continue;
+      }
+
+      try {
+        // Create a new equipment entry
+        const equipmentEntry = await prisma.equipment.create({
+          data: {
+            name,
+            description: description || "No description provided",
+            type,
+            price: price || null,
+            imageUrl: imageUrl || null,
+            thumbnailUrl: thumbnailUrl || null,
+            characterId: character.id,
+          },
+        });
+        results.push(equipmentEntry);
+        logger.info(`[API] Created equipment '${name}' for character ${parsedTargetId}`);
+      } catch (error) {
+        errors.push({ item, error: error.message });
+        logger.error(`[API] Failed to create equipment '${name}': ${error.message}`);
+      }
+    }
+
+    // Return response with results and any errors
+    return new Response(JSON.stringify({ results, errors }), {
+      status: errors.length > 0 ? 207 : 200, // 207 Multi-Status if there are partial failures
       headers: corsHeaders(),
     });
   } catch (error) {

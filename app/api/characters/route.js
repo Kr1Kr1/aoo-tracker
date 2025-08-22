@@ -10,6 +10,7 @@ export async function GET(req) {
     const characters = await prisma.characters.findMany({
       include: {
         faction: true,
+        attributes: true, // Include character attributes
         mdjHistory: {
           orderBy: { createdAt: "desc" },
           take: 1, // Get the most recent MDJ entry
@@ -19,6 +20,11 @@ export async function GET(req) {
           take: 1, // Get the most recent story modification
         },
       },
+      orderBy: {
+        attributes: {
+          xp: 'desc' // Order by XP descending
+        }
+      }
     });
 
     logger.info(`[API] Retrieved ${characters.length} characters.`);

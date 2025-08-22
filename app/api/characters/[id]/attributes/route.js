@@ -31,42 +31,11 @@ export async function POST(req, context) {
   
       const body = await req.json();
       logger.debug(`[API] Request body received: ${JSON.stringify(body)}`);
-      const { cc, ct, f, e, agi, pv, pm, fm, m, a, mvt, p, spd, r, rm, xp } = body;
-  
-      if (
-        cc === undefined || ct === undefined || f === undefined || e === undefined || 
-        agi === undefined || pv === undefined || pm === undefined || fm === undefined || 
-        m === undefined || a === undefined || mvt === undefined || p === undefined || 
-        r === undefined || rm === undefined || xp === undefined
-      ) {
-        logger.warn("[API] Missing required attribute fields in request body", {
-          missingFields: {
-            cc: cc === undefined,
-            ct: ct === undefined,
-            f: f === undefined,
-            e: e === undefined,
-            agi: agi === undefined,
-            pv: pv === undefined,
-            pm: pm === undefined,
-            fm: fm === undefined,
-            m: m === undefined,
-            a: a === undefined,
-            mvt: mvt === undefined,
-            p: p === undefined,
-            r: r === undefined,
-            rm: rm === undefined,
-            xp: xp === undefined,
-          },
-        });
-        return new Response(JSON.stringify({ error: "Missing required attribute fields in request body" }), {
-          status: 400,
-          headers: corsHeaders(),
-        });
-      }
   
       // Validate character existence by `targetId`
       const character = await prisma.characters.findUnique({
         where: { targetId: parsedTargetId },
+        include: { attributes: true }
       });
   
       if (!character) {
@@ -78,21 +47,46 @@ export async function POST(req, context) {
       }
   
       logger.debug(`[API] Fetched character: ${JSON.stringify(character)}`);
-      logger.debug(`[API] Proceeding to upsert attributes for character ID: ${character.id}`);
+
+      // Get current attributes
+      const currentAttributes = character.attributes || {
+        cc: 0, ct: 0, f: 0, e: 0, agi: 0, pv: 0, 
+        pm: 0, fm: 0, m: 0, a: 0, mvt: 0, p: 0, 
+        r: 0, rm: 0, xp: 0
+      };
+
+      // Create updated attributes
+      const updatedAttributes = {
+        ...currentAttributes,
+        ...body,
+        characterId: character.id
+      };
+
+      // Log changes to CharacterLog
+      for (const [attr, newValue] of Object.entries(body)) {
+        const oldValue = currentAttributes[attr];
+        if (oldValue !== newValue) {
+          await prisma.characterLog.create({
+            data: {
+              characterId: character.id,
+              attribute: attr,
+              oldValue: oldValue?.toString(),
+              newValue: newValue?.toString()
+            }
+          });
+          
+          logger.info(`[API] Logged ${attr} change for character ${character.name} (${targetId}): ${oldValue} -> ${newValue}`);
+        }
+      }
   
-      // Upsert attributes (update if exists, create if not)
+      // Upsert attributes
       const attributes = await prisma.characterAttributes.upsert({
         where: { characterId: character.id },
-        update: {
-          cc, ct, f, e, agi, pv, pm, fm, m, a, mvt, p, spd, r, rm, xp,
-        },
-        create: {
-          characterId: character.id,
-          cc, ct, f, e, agi, pv, pm, fm, m, a, mvt, p, spd, r, rm, xp,
-        },
+        update: updatedAttributes,
+        create: updatedAttributes,
       });
   
-      logger.info(`[API] Updated attributes for character with targetId ${parsedTargetId}: ${JSON.stringify(attributes)}`);
+      logger.debug(`[API] Updated attributes for character with targetId ${parsedTargetId}: ${JSON.stringify(attributes)}`);
       return new Response(JSON.stringify(attributes), {
         headers: corsHeaders(),
       });
@@ -104,6 +98,65 @@ export async function POST(req, context) {
         headers: corsHeaders(),
       });
     }
+}
+
+// GET: Fetch attributes and logs for a character
+export async function GET(req, context) {
+  try {
+    const params = await context.params;
+    const { id: targetId } = params;
+    const { searchParams } = new URL(req.url);
+    const includeLogs = searchParams.get('logs') === 'true';
+    
+    if (!targetId) {
+      return new Response(JSON.stringify({ error: "Character targetId is required" }), {
+        status: 400,
+        headers: corsHeaders(),
+      });
+    }
+
+    const parsedTargetId = parseInt(targetId, 10);
+    if (isNaN(parsedTargetId)) {
+      return new Response(JSON.stringify({ error: "Invalid character targetId" }), {
+        status: 400,
+        headers: corsHeaders(),
+      });
+    }
+
+    // Fetch character with attributes
+    const character = await prisma.characters.findUnique({
+      where: { targetId: parsedTargetId },
+      include: { attributes: true }
+    });
+
+    if (!character) {
+      return new Response(JSON.stringify({ error: "Character not found" }), {
+        status: 404,
+        headers: corsHeaders(),
+      });
+    }
+
+    let response = { attributes: character.attributes };
+
+    // Include logs if requested
+    if (includeLogs) {
+      const logs = await prisma.characterLog.findMany({
+        where: { characterId: character.id },
+        orderBy: { changedAt: 'desc' }
+      });
+      response.logs = logs;
+    }
+
+    return new Response(JSON.stringify(response), {
+      headers: corsHeaders(),
+    });
+  } catch (error) {
+    logger.error(`[API] Error fetching attributes: ${error.message}`);
+    return new Response(JSON.stringify({ error: "Internal Server Error" }), {
+      status: 500,
+      headers: corsHeaders(),
+    });
+  }
 }
 
 // OPTIONS: Handle CORS preflight

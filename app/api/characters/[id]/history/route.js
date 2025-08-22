@@ -85,15 +85,19 @@ export async function POST(req, context) {
     }
 }
 
-// GET: Fetch the history for a character
+// GET: Fetch the history and/or logs for a character
 export async function GET(req, context) {
   try {
     const params = await context.params;
     const { id: targetId } = params;
+    const { searchParams } = new URL(req.url);
+    const type = searchParams.get('type'); // 'history', 'logs', or undefined (both)
+    const attribute = searchParams.get('attribute'); // Filter logs by attribute (e.g., 'xp')
 
     if (!targetId) {
       return new Response(JSON.stringify({ error: "Missing targetId in the request" }), {
         status: 400,
+        headers: corsHeaders(),
       });
     }
 
@@ -102,6 +106,7 @@ export async function GET(req, context) {
     if (isNaN(parsedTargetId)) {
       return new Response(JSON.stringify({ error: "Invalid targetId format" }), {
         status: 400,
+        headers: corsHeaders(),
       });
     }
 
@@ -113,6 +118,7 @@ export async function GET(req, context) {
     if (!character) {
       return new Response(JSON.stringify({ error: "Character not found" }), {
         status: 404,
+        headers: corsHeaders(),
       });
     }
 

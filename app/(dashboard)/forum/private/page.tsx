@@ -1,69 +1,109 @@
-"use client";
-
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { PrismaClient } from '@prisma/client';
 import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from "@/components/ui/table";
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import Link from 'next/link';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export default function PrivateForumPage() {
-  const [topics, setTopics] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const router = useRouter();
+const prisma = new PrismaClient();
 
-  useEffect(() => {
-    // Fetch topics from the API
-    fetch("/api/forums/private")
-      .then((res) => res.json())
-      .then((data) => {
-        setTopics(data.topics);
-        setLoading(false);
-      })
-      .catch((err) => console.error("Error fetching private forum topics:", err));
-  }, []);
+async function getPrivateForums() {
+  const forums = await prisma.forums.findMany({
+    where: {
+      type: 'Private'
+    },
+    include: {
+      topics: {
+        include: {
+          messages: {
+            include: {
+              character: true
+            },
+            orderBy: {
+              createdAt: 'desc'
+            },
+            take: 1
+          },
+          author: true
+        },
+        orderBy: {
+          messages: {
+            _count: 'desc'
+          }
+        }
+      }
+    }
+  });
+  return forums;
+}
 
-  const handleViewTopic = (id) => {
-    router.push(`/forum/private/${id}`);
-  };
+export default async function PrivateForums() {
+  const forums = await getPrivateForums();
+  const defaultForum = forums[0]?.name || 'all';
 
   return (
-    <div className="container mx-auto p-8">
-      <h1 className="text-3xl font-bold mb-6">Private Forum Topics</h1>
-
-      {loading ? (
-        <p>Loading topics...</p>
-      ) : (
-        <Table className="border border-gray-400">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="px-4 py-2">Topic</TableHead>
-              <TableHead className="px-4 py-2">Author</TableHead>
-              <TableHead className="px-4 py-2">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {topics.map((topic) => (
-              <TableRow key={topic.id}>
-                <TableCell className="px-4 py-2">{topic.name}</TableCell>
-                <TableCell className="px-4 py-2">{topic.author?.name || "Unknown"}</TableCell>
-                <TableCell className="px-4 py-2">
-                  <button
-                    className="text-blue-500 hover:underline"
-                    onClick={() => handleViewTopic(topic.id)}
-                  >
-                    View Messages
-                  </button>
-                </TableCell>
-              </TableRow>
+    <div className="flex flex-col flex-1 gap-4 p-4 md:gap-8 md:p-6">
+      <div className="flex items-center">
+        <h1 className="font-semibold text-lg md:text-2xl">Private Forums</h1>
+      </div>
+      <Tabs defaultValue={defaultForum} className="flex-1">
+        <div className="flex items-center">
+          <TabsList>
+            {forums.map(forum => (
+              <TabsTrigger key={forum.id} value={forum.name}>
+                {forum.name}
+              </TabsTrigger>
             ))}
-          </TableBody>
-        </Table>
-      )}
+          </TabsList>
+        </div>
+        {forums.map(forum => (
+          <TabsContent key={forum.id} value={forum.name} className="flex-1 pt-6">
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>{forum.name}</CardTitle>
+                  <CardDescription>
+                    {forum.topics.length} topics
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {forum.topics.map((topic) => {
+                      const lastMessage = topic.messages[0];
+                      return (
+                        <div key={topic.id} className="flex justify-between items-center border-b pb-4">
+                          <div>
+                            <Link 
+                              href={topic.link} 
+                              className="text-lg font-medium hover:underline"
+                            >
+                              {topic.name}
+                            </Link>
+                            <div className="text-sm text-gray-500">
+                              Started by {topic.author.name}
+                            </div>
+                          </div>
+                          {lastMessage && (
+                            <div className="text-sm text-gray-500 text-right">
+                              Last reply by {lastMessage.character.name}
+                              <br />
+                              {new Date(lastMessage.createdAt).toLocaleDateString()}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        ))}
+      </Tabs>
     </div>
   );
 }

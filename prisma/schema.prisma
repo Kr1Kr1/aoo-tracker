@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -14,169 +8,202 @@ datasource db {
 }
 
 model Events {
-  id         Int      @id @default(autoincrement())
-  event      String
-  details    String?
-  fromCol    String
-  withWhom   String?
-  date       String
+  id             Int        @id @default(autoincrement())
+  event          String
+  details        String?
+  fromCol        String
+  withWhom       String?
+  date           String
   calculatedDate DateTime?
-  territory  String   @default("Unknown Territory")
-  source     String   @default("extension")
-
-  // Foreign key to Characters
-  characterId    Int      // Reference to the character who sees the event
+  territory      String     @default("Unknown Territory")
+  source         String     @default("extension")
+  characterId    Int
+  createdAt      DateTime   @default(now())
   character      Characters @relation(fields: [characterId], references: [id])
-
-  createdAt      DateTime @default(now())
 }
 
 model Factions {
-  id   Int    @id @default(autoincrement())
-  name String @unique // Ensure each faction name is unique
-
-  // A faction can have many characters
+  id         Int          @id @default(autoincrement())
+  name       String       @unique
   characters Characters[]
-
-  // A faction can own private forums
-  forums Forums[]
+  forums     Forums[]
 }
 
 model Characters {
-  id          Int      @id @default(autoincrement())
-  targetId    Int      @unique // Corresponds to `targetId` in the game
-  name        String
-  rank        String?
-  popularity  String?
-  role        String?
-  portraitUrl String?
-
-  // Foreign key to Factions
-  factionId Int?      // Nullable foreign key
-  faction   Factions? @relation(fields: [factionId], references: [id])
-
-  // Relationship to Events
-  events Events[] // A character can see multiple events
-
-  // Relationship to MDJHistory
-  mdjHistory MDJHistory[]
-
-  // Relationship to CharacterHistory
+  id           Int                  @id @default(autoincrement())
+  targetId     Int                  @unique
+  name         String
+  rank         String?
+  popularity   String?
+  role         String?
+  portraitUrl  String?
+  factionId    Int?
+  createdAt    DateTime             @default(now())
+  attributes   CharacterAttributes?
   storyHistory CharacterHistory[]
+  logs         CharacterLog[]
+  faction      Factions?            @relation(fields: [factionId], references: [id])
+  equipment    Equipment[]
+  events       Events[]
+  mdjHistory   MDJHistory[]
+  mapTiles     MapTiles[]
+  messages     Messages[]
+  topics       Topics[]
 
-  // A character can create multiple topics
-  topics Topics[]
-
-  // A character can post multiple messages
-  messages Messages[]
-
-  // Relationship to CharacterLog
-  logs CharacterLog[] // A character can have multiple logs
-
-  // Relationship to Equipment
-  equipment Equipment[]
-
-  attributes CharacterAttributes?
-
-  createdAt   DateTime @default(now())
   @@index([targetId])
 }
 
 model Equipment {
-  id          Int      @id @default(autoincrement())
-  name        String   // Name of the equipment
-  description String   // Description of the equipment
-  type        String   // Type of equipment (e.g., "weapon", "armor", etc.)
-  price       Int?     // Price of the equipment
-  imageUrl    String?  // Full image URL of the equipment
-  thumbnailUrl String? // Thumbnail image URL of the equipment
-
-  // Foreign key to Characters
-  characterId Int      // Character that owns this equipment
-  character   Characters @relation(fields: [characterId], references: [id])
+  id           Int        @id @default(autoincrement())
+  name         String
+  description  String
+  type         String
+  price        Int?
+  imageUrl     String?
+  thumbnailUrl String?
+  characterId  Int
+  character    Characters @relation(fields: [characterId], references: [id])
 }
 
 model MDJHistory {
-  id          Int      @id @default(autoincrement())
-  characterId Int      // Foreign key to the Characters table
+  id          Int        @id @default(autoincrement())
+  characterId Int
+  mdj         String
+  createdAt   DateTime   @default(now())
   character   Characters @relation(fields: [characterId], references: [id])
-  mdj         String   // The message content
-  createdAt   DateTime @default(now()) // Timestamp of when the message was set
 }
 
 model CharacterHistory {
-  id             Int         @id @default(autoincrement())
-  characterId    Int         // Foreign key to the Characters table
-  character      Characters  @relation(fields: [characterId], references: [id])
-  story          String      // The story content
-  modifiedAt     DateTime    @default(now()) // Timestamp of the modification
+  id          Int        @id @default(autoincrement())
+  characterId Int
+  story       String
+  modifiedAt  DateTime   @default(now())
+  character   Characters @relation(fields: [characterId], references: [id])
 }
 
 model CharacterLog {
-  id          Int      @id @default(autoincrement())
-  characterId Int      // Foreign key to the Characters table
+  id          Int        @id @default(autoincrement())
+  characterId Int
+  attribute   String
+  oldValue    String?
+  newValue    String?
+  changedAt   DateTime   @default(now())
   character   Characters @relation(fields: [characterId], references: [id])
-  attribute   String   // Name of the changed attribute (e.g., "cc", "pv")
-  oldValue    String?  // Previous value (store as a string to handle non-numeric values too)
-  newValue    String?  // New value
-  changedAt   DateTime @default(now()) // Timestamp of the change
 }
 
 model CharacterAttributes {
-  id          Int     @id @default(autoincrement())
-  characterId Int     @unique // Link to Characters table
-  character   Characters @relation(fields: [characterId], references: [id]) // Only this side specifies `fields` and `references`
-  cc          Int     // Capacité de Combat
-  ct          Int     // Capacité de Tir
-  f           Int     // Force
-  e           Int     // Endurance
-  agi         Int     // Agilité
-  pv          Int     // Points de Vie
-  pm          Int     // Points de Magie
-  fm          Int     // Force Mentale
-  m           Int     // Puissance magique
-  a           Int     // Actions
-  mvt         Int     // Mouvements
-  p           Int     // Perception
-  r           Int     // Récupération
-  rm          Int     // Récupération Magique
-  xp          Int     // Points d'expérience
-  createdAt   DateTime @default(now()) // Timestamp for record creation
-  updatedAt   DateTime @updatedAt      // Timestamp for last update
+  id          Int        @id @default(autoincrement())
+  characterId Int        @unique
+  raceId      Int?
+  race        Race?      @relation(fields: [raceId], references: [id])
+  cc          Int
+  ct          Int
+  f           Int
+  e           Int
+  agi         Int
+  pv          Int
+  pm          Int
+  fm          Int
+  m           Int
+  a           Int
+  mvt         Int
+  p           Int
+  r           Int
+  rm          Int
+  xp          Int
+  spd         Int       @default(16)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  character   Characters @relation(fields: [characterId], references: [id])
+
+  @@index([raceId])
+}
+
+model Race {
+  id          Int                  @id @default(autoincrement())
+  name        String               @unique
+  characters  CharacterAttributes[]
 }
 
 model Forums {
   id        Int       @id @default(autoincrement())
-  name      String    // Name of the forum
-  link      String    @unique // Link to the forum
-  type      String    // Type of forum: 'RP' or 'Private'
-  factionId Int?      // Foreign key to Factions (nullable for RP forums)
+  name      String
+  link      String    @unique
+  type      String
+  factionId Int?
   faction   Factions? @relation(fields: [factionId], references: [id])
-
-  // A forum can have many topics
-  topics Topics[]
+  topics    Topics[]
 }
 
 model Topics {
-  id        Int         @id @default(autoincrement())
-  name      String      // Name of the topic
-  link      String      @unique // Link to the topic
-  authorId  Int         // Foreign key to Characters (author of the topic)
-  author    Characters  @relation(fields: [authorId], references: [id])
-  forumId   Int         // Foreign key to Forums
-  forum     Forums      @relation(fields: [forumId], references: [id])
-
-  // A topic can have many messages
+  id       Int        @id @default(autoincrement())
+  name     String
+  link     String     @unique
+  authorId Int
+  forumId  Int
   messages Messages[]
+  forum    Forums     @relation(fields: [forumId], references: [id])
+  author   Characters @relation(fields: [authorId], references: [id])
 }
 
 model Messages {
-  id          Int         @id @default(autoincrement())
-  content     String      // Content of the message
-  date        String      // Original date of the message
-  createdAt   DateTime    @default(now()) // Timestamp of when the message was inserted into the DB
-  characterId Int         // Foreign key to Characters (author of the message)
-  character   Characters  @relation(fields: [characterId], references: [id])
-  topicId     Int         // Foreign key to Topics
-  topic       Topics      @relation(fields: [topicId], references: [id])
+  id          Int        @id @default(autoincrement())
+  content     String
+  date        String
+  createdAt   DateTime   @default(now())
+  characterId Int
+  topicId     Int
+  topic       Topics     @relation(fields: [topicId], references: [id])
+  character   Characters @relation(fields: [characterId], references: [id])
+}
+
+model Maps {
+  id     Int      @id @default(autoincrement())
+  name   String   @unique
+  coords Coords[]
+}
+
+model Coords {
+  id          Int           @id @default(autoincrement())
+  x           Int           @default(0)
+  y           Int           @default(0)
+  z           Int           @default(0)
+  mapId       Int
+  map         Maps          @relation(fields: [mapId], references: [id])
+  mapElements MapElements[]
+  mapTiles    MapTiles[]
+
+  @@index([mapId])
+}
+
+model MapTiles {
+  id         Int         @id @default(autoincrement())
+  name       String
+  coordsId   Int
+  foreground Int         @default(0)
+  playerId   Int?
+  player     Characters? @relation(fields: [playerId], references: [id])
+  coords     Coords      @relation(fields: [coordsId], references: [id])
+
+  @@index([coordsId])
+  @@index([playerId])
+}
+
+model MapElements {
+  id       Int    @id @default(autoincrement())
+  name     String @unique
+  coordsId Int
+  endTime  Int    @default(0)
+  coords   Coords @relation(fields: [coordsId], references: [id])
+
+  @@unique([name, coordsId])
+  @@index([coordsId])
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

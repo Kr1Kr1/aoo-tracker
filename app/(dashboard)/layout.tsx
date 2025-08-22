@@ -8,6 +8,8 @@ import {
   BookOpen,
   Shield,
   Map as MapIcon,
+  Image,
+  Trophy,
 } from "lucide-react";
 import {
   Breadcrumb,
@@ -71,6 +73,10 @@ function DesktopNav() {
           <Users2 className="h-5 w-5" />
         </NavItem>
 
+        <NavItem href="/rankings" label="Rankings">
+          <Trophy className="h-5 w-5" />
+        </NavItem>
+
         {/* Forum Section */}
         <NavItem href="/forum/public" label="Public Forum">
           <BookOpen className="h-5 w-5" />
@@ -83,6 +89,11 @@ function DesktopNav() {
         {/* Map Section */}
         <NavItem href="/map" label="Map">
           <MapIcon className="h-5 w-5" />
+        </NavItem>
+
+        {/* Assets Section */}
+        <NavItem href="/assets" label="Assets">
+          <Image className="h-5 w-5" />
         </NavItem>
       </nav>
       <nav className="mt-auto flex flex-col items-center gap-4 px-2 sm:py-5">
@@ -146,6 +157,14 @@ function MobileNav() {
             Characters
           </Link>
 
+          <Link
+            href="/rankings"
+            className="flex items-center gap-4 px-2.5 text-muted-foreground hover:text-foreground"
+          >
+            <Trophy className="h-5 w-5" />
+            Rankings
+          </Link>
+
           {/* Forum Section */}
           <Link
             href="/forum/public"
@@ -170,6 +189,15 @@ function MobileNav() {
           >
             <MapIcon className="h-5 w-5" />
             Map
+          </Link>
+
+          {/* Assets Section */}
+          <Link
+            href="/assets"
+            className="flex items-center gap-4 px-2.5 text-muted-foreground hover:text-foreground"
+          >
+            <Image className="h-5 w-5" />
+            Assets
           </Link>
 
           <Link
