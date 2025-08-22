@@ -1,5 +1,4 @@
 import { Button } from '@/components/ui/button';
-import { auth, signOut } from '@/lib/auth';
 import Image from 'next/image';
 import {
   DropdownMenu,
@@ -10,10 +9,30 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import Link from 'next/link';
+import { cookies } from 'next/headers';
+import * as jose from 'jose';
+
+const JWT_SECRET = new TextEncoder().encode(
+  process.env.JWT_SECRET || 'your-secret-key'
+);
+
+async function getUser() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get('token')?.value;
+  
+  if (!token) return null;
+  
+  try {
+    const { payload } = await jose.jwtVerify(token, JWT_SECRET);
+    return payload;
+  } catch (error) {
+    console.error('Invalid token:', error);
+    return null;
+  }
+}
 
 export async function User() {
-  let session = await auth();
-  let user = session?.user;
+  const user = await getUser();
 
   return (
     <DropdownMenu>
@@ -43,7 +62,8 @@ export async function User() {
             <form
               action={async () => {
                 'use server';
-                await signOut();
+                const cookieStore = await cookies();
+                cookieStore.delete('token');
               }}
             >
               <button type="submit">Sign Out</button>
