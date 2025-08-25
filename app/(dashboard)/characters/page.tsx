@@ -10,8 +10,20 @@ import { StarIcon } from "@/components/icons";
 
 const baseURL = "https://age-of-olympia.net/infos.php?targetId=";
 
+// Minimal shape used in this component
+type Character = {
+  id: number;
+  targetId: number | string;
+  name: string;
+  faction?: { name?: string } | null;
+  role?: string | null;
+  rank?: string | null;
+  attributes?: { xp?: number } | null;
+  avatarUrl?: string | null;
+};
+
 export default function CharactersPage() {
-  const [characters, setCharacters] = useState([]);
+  const [characters, setCharacters] = useState<Character[]>([]);
   const [filter, setFilter] = useState("");
   const [factionFilter, setFactionFilter] = useState("All");
   const [characterType, setCharacterType] = useState("All");
@@ -19,12 +31,15 @@ export default function CharactersPage() {
 
   useEffect(() => {
     fetch("/api/characters")
-      .then((res) => res.json())
+      .then(async (res) => {
+        const json = await res.json().catch(() => [] as Character[]);
+        return Array.isArray(json) ? (json as Character[]) : ([] as Character[]);
+      })
       .then((data) => setCharacters(data))
       .catch((err) => console.error("Error fetching characters:", err));
   }, []);
 
-  const getFactionColor = (faction) => {
+  const getFactionColor = (faction?: string) => {
     switch (faction?.toLowerCase()) {
       case "le royaume des cimes":
         return "bg-amber-200 text-amber-800";
@@ -51,7 +66,7 @@ export default function CharactersPage() {
     }
   };
 
-  const filteredCharacters = characters.filter((character) => {
+  const filteredCharacters = characters.filter((character: Character) => {
     const matchesName = character.name.toLowerCase().includes(filter.toLowerCase());
     const matchesFaction =
       factionFilter === "All" || character.faction?.name === factionFilter;
@@ -63,7 +78,7 @@ export default function CharactersPage() {
     return matchesName && matchesFaction && matchesType;
   });
 
-  const handleViewDetails = (targetId) => {
+  const handleViewDetails = (targetId: number | string) => {
     router.push(`/characters/${targetId}`);
   };
 

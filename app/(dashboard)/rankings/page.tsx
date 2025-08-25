@@ -13,17 +13,30 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+// Minimal shape used in this component
+type Character = {
+  id: number;
+  name: string;
+  targetId: number | string;
+  attributes?: { xp?: number } | null;
+};
+
 export default function RankingsPage() {
-  const [characters, setCharacters] = useState([]);
+  const [characters, setCharacters] = useState<Character[]>([]);
   const [filter, setFilter] = useState("");
   const [characterType, setCharacterType] = useState("All");
+  // Placeholder history to avoid runtime errors until a proper data source is wired
+  const xpHistory: Array<{ characterId: number; changedAt: string; oldValue?: string; newValue?: string }> = [];
 
   useEffect(() => {
     // Fetch characters with their latest XP
     fetch("/api/characters")
-      .then((res) => res.json())
+      .then(async (res) => {
+        const json = await res.json().catch(() => [] as Character[]);
+        return Array.isArray(json) ? (json as Character[]) : ([] as Character[]);
+      })
       .then((data) => {
-        // Sort characters by XP
+        // Sort characters by XP (defensive: data is guaranteed an array)
         const sortedCharacters = data.sort((a, b) => {
           const xpA = a.attributes?.xp || 0;
           const xpB = b.attributes?.xp || 0;
