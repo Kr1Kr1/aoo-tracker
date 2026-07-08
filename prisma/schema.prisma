@@ -36,25 +36,35 @@ model Characters {
   rank         String?
   popularity   String?
   role         String?
+  race         String?
   portraitUrl  String?
-  factionId    Int?
-  createdAt    DateTime             @default(now())
+  factionId      Int?
+  coordsId       Int?
+  mapAvatarHref  String?              // small sprite seen on the world map
+  mapColor       String?              // race bgColor the engine paints around the player tile
+  createdAt      DateTime             @default(now())
   attributes   CharacterAttributes?
   storyHistory CharacterHistory[]
   logs         CharacterLog[]
   faction      Factions?            @relation(fields: [factionId], references: [id])
+  coords       Coords?              @relation("CharacterAtCoords", fields: [coordsId], references: [id])
   equipment    Equipment[]
   events       Events[]
   mdjHistory   MDJHistory[]
   mapTiles     MapTiles[]
+  mapWalls     MapWalls[]
+  mapRoutes    MapRoutes[]          @relation("RoutesByPlayer")
   messages     Messages[]
   topics       Topics[]
+  users        User[]
 
   @@index([targetId])
+  @@index([coordsId])
 }
 
 model Equipment {
   id           Int        @id @default(autoincrement())
+  gameId       String?
   name         String
   description  String
   type         String
@@ -63,6 +73,8 @@ model Equipment {
   thumbnailUrl String?
   characterId  Int
   character    Characters @relation(fields: [characterId], references: [id])
+
+  @@unique([characterId, gameId])
 }
 
 model MDJHistory {
@@ -136,14 +148,16 @@ model Forums {
 }
 
 model Topics {
-  id       Int        @id @default(autoincrement())
-  name     String
-  link     String     @unique
-  authorId Int
-  forumId  Int
-  messages Messages[]
-  forum    Forums     @relation(fields: [forumId], references: [id])
-  author   Characters @relation(fields: [authorId], references: [id])
+  id        Int        @id @default(autoincrement())
+  name      String
+  link      String     @unique
+  authorId  Int
+  forumId   Int
+  closed    Boolean    @default(false)
+  updatedAt DateTime   @updatedAt
+  messages  Messages[]
+  forum     Forums     @relation(fields: [forumId], references: [id])
+  author    Characters @relation(fields: [authorId], references: [id])
 }
 
 model Messages {
@@ -157,53 +171,212 @@ model Messages {
   character   Characters @relation(fields: [characterId], references: [id])
 }
 
-model Maps {
-  id     Int      @id @default(autoincrement())
-  name   String   @unique
-  coords Coords[]
+// ─── Map ──────────────────────────────────────────────────────────────
+// Mirrors the game's `coords + map_tiles + map_walls + map_elements +
+// map_foregrounds + map_routes` schema. Populated incrementally by the
+// extension as the player explores.
+
+// Static metadata about a "plan" (zone/area). Seeded from the engine's
+// datas/private/plans/*.json. Coords.plan is a loose String reference —
+// no FK so unknown plans don't break ingest.
+model Plan {
+  name              String       @id          // "olympia", "cimes_geantes"
+  displayName       String                    // "Olympia", "Cimes Géantes"
+  shortName         String?
+  worldX            Int?                       // position in the global plan grid
+  worldY            Int?
+  visibleByDefault  Boolean      @default(false)
+  visibleBoundsMinX Int?
+  visibleBoundsMaxX Int?
+  visibleBoundsMinY Int?
+  visibleBoundsMaxY Int?
+  numZLevels        Int          @default(1)
+  pnjSeedId         Int?                       // first PNJ id from the engine's "pnj" field
+  metadata          String?                    // raw JSON (biomes, etc.) for forensics
+  zLevels           PlanZLevel[]
+  exitsFrom         PlanExit[]   @relation("ExitFrom")
+  exitsTo           PlanExit[]   @relation("ExitTo")
+}
+
+model PlanZLevel {
+  id                Int     @id @default(autoincrement())
+  planName          String
+  z                 Int
+  zName             String?
+  // Per-z backdrop scraped from the SVG container's `background: url(...)`
+  // (e.g. img/tiles/sky.webp for an open-air upper level). Overrides the
+  // plan-level guessed bg when the renderer paints this z-level.
+  bg                String?
+  visibleBoundsMinX Int?
+  visibleBoundsMaxX Int?
+  visibleBoundsMinY Int?
+  visibleBoundsMaxY Int?
+  plan              Plan    @relation(fields: [planName], references: [name], onDelete: Cascade)
+
+  @@unique([planName, z])
+  @@index([planName])
+}
+
+model PlanExit {
+  id        Int    @id @default(autoincrement())
+  planFrom  String
+  planTo    String
+  direction String                   // n, s, e, w, ne, se, nw, sw
+  fromPlan  Plan   @relation("ExitFrom", fields: [planFrom], references: [name], onDelete: Cascade)
+  toPlan    Plan   @relation("ExitTo",   fields: [planTo],   references: [name], onDelete: Cascade)
+
+  @@index([planFrom])
+  @@index([planTo])
 }
 
 model Coords {
-  id          Int           @id @default(autoincrement())
-  x           Int           @default(0)
-  y           Int           @default(0)
-  z           Int           @default(0)
-  mapId       Int
-  map         Maps          @relation(fields: [mapId], references: [id])
-  mapElements MapElements[]
-  mapTiles    MapTiles[]
+  id    Int    @id @default(autoincrement())
+  x     Int
+  y     Int
+  z     Int    @default(0)
+  plan  String @default("gaia")
 
-  @@index([mapId])
+  // Persona (AOM targetId) that revealed this cell. NULL or positive = a PJ
+  // ("canon", e.g. medarda) and always visible; negative = a PNJ, hidden from
+  // the default map view and shown only when its persona layer is toggled on.
+  // A PJ scrape always upgrades the cell to canon; a PNJ never downgrades it.
+  seenById Int?
+
+  mapTiles       MapTiles[]
+  mapWalls       MapWalls[]
+  mapElements    MapElements[]
+  mapForegrounds MapForegrounds[]
+  mapRoutes      MapRoutes[]
+  mapPlants      MapPlants[]
+  charactersHere Characters[]    @relation("CharacterAtCoords")
+
+  @@unique([x, y, z, plan])
+  @@index([plan])
+  @@index([seenById])
 }
 
 model MapTiles {
   id         Int         @id @default(autoincrement())
   name       String
+  href       String?
   coordsId   Int
   foreground Int         @default(0)
-  playerId   Int?
+  playerId   Int?        // owner (e.g. faction camps)
+  scrapedAt  DateTime    @updatedAt
   player     Characters? @relation(fields: [playerId], references: [id])
   coords     Coords      @relation(fields: [coordsId], references: [id])
 
+  @@unique([coordsId, name])
+  @@index([coordsId])
+  @@index([playerId])
+}
+
+model MapWalls {
+  id        Int         @id @default(autoincrement())
+  name      String
+  href      String?
+  coordsId  Int
+  playerId  Int?
+  damages   Int         @default(0)
+  scrapedAt DateTime    @updatedAt
+  player    Characters? @relation(fields: [playerId], references: [id])
+  coords    Coords      @relation(fields: [coordsId], references: [id])
+
+  @@unique([coordsId, name])
   @@index([coordsId])
   @@index([playerId])
 }
 
 model MapElements {
-  id       Int    @id @default(autoincrement())
-  name     String @unique
-  coordsId Int
-  endTime  Int    @default(0)
-  coords   Coords @relation(fields: [coordsId], references: [id])
+  id        Int      @id @default(autoincrement())
+  name      String
+  href      String?
+  coordsId  Int
+  endTime   Int      @default(0)
+  opacity   Float    @default(1.0)
+  scrapedAt DateTime @updatedAt
+  coords    Coords   @relation(fields: [coordsId], references: [id])
 
   @@unique([name, coordsId])
   @@index([coordsId])
 }
 
-model User {
+model MapForegrounds {
   id        Int      @id @default(autoincrement())
-  username  String   @unique
-  password  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  name      String
+  href      String?
+  coordsId  Int
+  scrapedAt DateTime @updatedAt
+  coords    Coords   @relation(fields: [coordsId], references: [id])
+
+  @@unique([coordsId, name])
+  @@index([coordsId])
 }
+
+model MapRoutes {
+  id        Int         @id @default(autoincrement())
+  name      String      @default("route")
+  href      String?
+  coordsId  Int
+  playerId  Int?
+  scrapedAt DateTime    @updatedAt
+  coords    Coords      @relation(fields: [coordsId], references: [id])
+  player    Characters? @relation("RoutesByPlayer", fields: [playerId], references: [id])
+
+  @@unique([coordsId, name])
+  @@index([coordsId])
+  @@index([playerId])
+}
+
+model MapPlants {
+  id        Int      @id @default(autoincrement())
+  name      String
+  href      String?
+  coordsId  Int
+  scrapedAt DateTime @updatedAt
+  coords    Coords   @relation(fields: [coordsId], references: [id])
+
+  @@unique([coordsId, name])
+  @@index([coordsId])
+}
+
+model MapSnapshot {
+  id         Int                @id @default(autoincrement())
+  capturedAt DateTime           @unique
+  svgWidth   Int                @default(800)
+  svgHeight  Int                @default(532)
+  playerId   Int?
+  createdAt  DateTime           @default(now())
+  layers     MapSnapshotLayer[]
+
+  @@index([capturedAt])
+}
+
+model MapSnapshotLayer {
+  id          Int         @id @default(autoincrement())
+  snapshotId  Int
+  layerKey    String
+  sourceHref  String
+  contentHash String
+  filePath    String
+  x           Int
+  y           Int
+  width       Int
+  height      Int
+  zOrder      Int
+  snapshot    MapSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
+  @@index([contentHash])
+}
+
+model User {
+  id         Int          @id @default(autoincrement())
+  username   String       @unique
+  password   String
+  role       String       @default("user") // "user" | "admin"
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  characters Characters[]
+}
+
