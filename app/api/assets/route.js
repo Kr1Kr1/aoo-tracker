@@ -1,71 +1,86 @@
-import { NextResponse } from 'next/server';
-import { writeFile, mkdir } from 'fs/promises';
-import path from 'path';
+import { writeFile, mkdir, access } from "fs/promises";
+import path from "path";
 import { logger } from "@/lib/logger";
+import { jsonResponse, errorResponse, preflight } from "@/lib/api";
+import { getCallerContext } from "@/lib/authContext";
 
-// Map of asset types to their directories
-const ASSET_DIRS = {
-  tiles: 'tiles',
-  elements: 'elements',
-  avatars: 'avatars',
-  walls: 'walls'
-};
+// Strict allowlist: only assets from the AOM CDN, only image extensions,
+// only paths under img/. Prevents SSRF + arbitrary write.
+const ALLOWED_RE = /^https:\/\/age-of-olympia\.net\/(img\/[a-zA-Z0-9._/-]+\.(?:png|jpg|jpeg|webp|gif|svg))$/i;
+const MAX_BYTES = 5 * 1024 * 1024; // 5 MB cap per file
 
-export async function POST(request) {
+const ASSETS_ROOT = path.join(process.cwd(), "public", "assets", "aom");
+
+async function fileExists(filePath) {
   try {
-    const { url, type } = await request.json();
-    logger.debug(`[API] Received asset download request for type: ${type}, url: ${url}`);
-    
-    if (!url || !type || !ASSET_DIRS[type]) {
-      logger.warn(`[API] Invalid request. URL: ${url}, type: ${type}`);
-      return NextResponse.json(
-        { error: 'Invalid request. URL and valid type required.' },
-        { status: 400 }
-      );
-    }
-
-    // Extract filename from URL
-    const filename = url.split('/').pop();
-    if (!filename) {
-      logger.warn(`[API] Could not extract filename from URL: ${url}`);
-      return NextResponse.json(
-        { error: 'Could not extract filename from URL' },
-        { status: 400 }
-      );
-    }
-
-    // Create asset directory if it doesn't exist
-    const assetDir = path.join(process.cwd(), 'public', 'assets', ASSET_DIRS[type]);
-    await mkdir(assetDir, { recursive: true });
-    logger.info(`[API] Ensuring asset directory exists: ${assetDir}`);
-
-    // Full path for the new file
-    const filePath = path.join(assetDir, filename);
-    
-    // Download and save the image
-    const response = await fetch(url);
-    if (!response.ok) {
-      logger.error(`[API] Failed to fetch image from URL: ${url}, status: ${response.status}`);
-      throw new Error(`Failed to fetch image: ${response.statusText}`);
-    }
-    
-    const buffer = await response.arrayBuffer();
-    await writeFile(filePath, Buffer.from(buffer));
-    logger.info(`[API] Successfully saved asset to: ${filePath}`);
-
-    // Return the local path that can be used to access the image
-    const publicPath = `/assets/${ASSET_DIRS[type]}/${filename}`;
-    
-    logger.debug(`[API] Returning public path: ${publicPath}`);
-    return NextResponse.json({
-      success: true,
-      path: publicPath
-    });
-  } catch (error) {
-    logger.error(`[API] Error processing asset: ${error.message}`, { stack: error.stack });
-    return NextResponse.json(
-      { error: 'Failed to process asset' },
-      { status: 500 }
-    );
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
   }
+}
+
+async function downloadOne(url) {
+  const match = url.match(ALLOWED_RE);
+  if (!match) return { url, error: "URL not allowed" };
+
+  const relPath = match[1]; // "img/tiles/falaise.png"
+  const localPath = path.join(ASSETS_ROOT, relPath);
+
+  if (await fileExists(localPath)) {
+    return { url, path: `/assets/aom/${relPath}`, cached: true };
+  }
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return { url, error: `HTTP ${res.status}` };
+
+    const contentLength = parseInt(res.headers.get("content-length") || "0", 10);
+    if (contentLength > MAX_BYTES) return { url, error: "File too large" };
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > MAX_BYTES) return { url, error: "File too large" };
+
+    await mkdir(path.dirname(localPath), { recursive: true });
+    await writeFile(localPath, buf);
+
+    return { url, path: `/assets/aom/${relPath}`, cached: false };
+  } catch (err) {
+    return { url, error: err.message };
+  }
+}
+
+// POST { urls: string[] } — downloads any not-yet-cached. Returns map of
+// url → { path, cached } or { error }.
+export async function POST(request) {
+  const origin = request.headers.get("origin");
+  try {
+    const ctx = await getCallerContext(request);
+    if (!ctx) return errorResponse("Unauthorized", 401, origin);
+
+    const body = await request.json();
+    const urls = Array.isArray(body.urls) ? body.urls : body.url ? [body.url] : [];
+    if (urls.length === 0) {
+      return errorResponse("No URLs provided", 400, origin);
+    }
+    if (urls.length > 500) {
+      return errorResponse("Too many URLs (max 500 per request)", 400, origin);
+    }
+
+    // Sequential to avoid hammering the AOM CDN. Could chunk in parallel later.
+    const results = [];
+    for (const url of urls) {
+      results.push(await downloadOne(url));
+    }
+    const okCount = results.filter((r) => r.path).length;
+    logger.info(`Assets: ${okCount}/${urls.length} resolved (${ctx.username})`);
+    return jsonResponse({ results }, { origin });
+  } catch (err) {
+    logger.error(`Error downloading assets: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
+  }
+}
+
+export async function OPTIONS(request) {
+  return preflight(request.headers.get("origin"));
 }

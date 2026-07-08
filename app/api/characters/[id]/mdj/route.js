@@ -1,149 +1,107 @@
-import { PrismaClient } from "@prisma/client";
+import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { jsonResponse, errorResponse, preflight, parseTargetId } from "@/lib/api";
+import { getCallerContext, canAccessTargetId } from "@/lib/authContext";
 
-const prisma = new PrismaClient();
-
-export async function POST(req, context) {
-    try {
-      // Await params destructuring
-      const params = await context.params;
-      const { id: targetId } = params;
-  
-      if (!targetId) {
-        logger.error("[API] Missing targetId in request parameters");
-        return new Response(JSON.stringify({ error: "Character targetId is required" }), {
-          status: 400,
-          headers: corsHeaders(),
-        });
-      }
-  
-      const parsedTargetId = parseInt(targetId, 10);
-      if (isNaN(parsedTargetId)) {
-        logger.error("[API] Invalid targetId provided");
-        return new Response(JSON.stringify({ error: "Invalid character targetId" }), {
-          status: 400,
-          headers: corsHeaders(),
-        });
-      }
-  
-      const body = await req.json();
-      const { mdj } = body;
-  
-      if (!mdj || !mdj.trim()) {
-        logger.warn("[API] Missing or empty MDJ content");
-        return new Response(JSON.stringify({ error: "Missing or empty MDJ content" }), {
-          status: 400,
-          headers: corsHeaders(),
-        });
-      }
-  
-      // Validate character existence by `targetId`
-      const character = await prisma.characters.findUnique({
-        where: { targetId: parsedTargetId },
-      });
-  
-      if (!character) {
-        logger.error(`[API] Character with targetId ${parsedTargetId} does not exist`);
-        return new Response(JSON.stringify({ error: "Invalid character targetId" }), {
-          status: 400,
-          headers: corsHeaders(),
-        });
-      }
-  
-      // Fetch the most recent MDJ for the character
-      const mostRecentMdj = await prisma.mDJHistory.findFirst({
-        where: { characterId: character.id },
-        orderBy: { createdAt: "desc" }, // Fetch the most recent entry
-      });
-  
-      // Compare with the new MDJ content
-      if (mostRecentMdj && mostRecentMdj.mdj.trim() === mdj.trim()) {
-        logger.info(`[API] Duplicate MDJ content detected for character with targetId ${parsedTargetId}`);
-        return new Response(JSON.stringify({ error: "Duplicate MDJ content detected" }), {
-          status: 409, // Conflict
-          headers: corsHeaders(),
-        });
-      }
-  
-      // Create a new MDJHistory entry
-      const mdjEntry = await prisma.mDJHistory.create({
-        data: {
-          characterId: character.id, // Use the `id` from the retrieved character
-          mdj: mdj.trim(),
-        },
-      });
-  
-      logger.info(`[API] Created new MDJ entry for character with targetId ${parsedTargetId}: ${JSON.stringify(mdjEntry)}`);
-      return new Response(JSON.stringify(mdjEntry), {
-        headers: corsHeaders(),
-      });
-    } catch (error) {
-      logger.error(`[API] Error updating MDJ for character: ${error.message}`, { stack: error.stack });
-      return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-        status: 500,
-        headers: corsHeaders(),
-      });
-    }
+async function authorize(request, targetId, origin) {
+  const ctx = await getCallerContext(request);
+  if (!ctx) return errorResponse("Unauthorized", 401, origin);
+  if (!canAccessTargetId(ctx, targetId)) return errorResponse("Forbidden", 403, origin);
+  return null;
 }
 
-export async function GET(req, context) {
-    try {
-      const params = await context.params;
-      const { id: targetId } = params;
-  
-      if (!targetId) {
-        return new Response(JSON.stringify({ error: "Missing targetId in the request" }), {
-          status: 400,
-        });
-      }
-  
-      const parsedTargetId = parseInt(targetId, 10);
-  
-      if (isNaN(parsedTargetId)) {
-        return new Response(JSON.stringify({ error: "Invalid targetId format" }), {
-          status: 400,
-        });
-      }
-  
-      // Fetch the character by targetId
-      const character = await prisma.characters.findUnique({
-        where: { targetId: parsedTargetId },
-      });
-  
-      if (!character) {
-        return new Response(JSON.stringify({ error: "Character not found" }), {
-          status: 404,
-        });
-      }
-  
-      // Fetch the MDJ history for the character
-      const mdjHistory = await prisma.mDJHistory.findMany({
-        where: { characterId: character.id },
-        orderBy: { createdAt: "desc" },
-      });
+export async function POST(request, context) {
+  const origin = request.headers.get("origin");
+  try {
+    const { id } = await context.params;
+    const targetId = parseTargetId(id);
+    if (targetId === null) return errorResponse("Invalid targetId", 400, origin);
 
-      return new Response(JSON.stringify(mdjHistory), {
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (error) {
-      console.error("Error in GET /api/characters/[id]/mdj:", error);
-      return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-        status: 500,
-      });
+    const denied = await authorize(request, targetId, origin);
+    if (denied) return denied;
+
+    const { mdj, createdAt } = await request.json();
+    if (!mdj || !mdj.trim()) {
+      return errorResponse("Missing or empty MDJ content", 400, origin);
     }
-}  
-  
-export async function OPTIONS(req) {
-  return new Response(null, {
-    headers: corsHeaders(),
-    status: 204, // No content
-  });
+
+    const character = await prisma.characters.findUnique({ where: { targetId } });
+    if (!character) return errorResponse("Character not found", 404, origin);
+
+    const trimmedMdj = mdj.trim();
+
+    // Log-sourced entries pass an explicit timestamp so they line up with the
+    // game's MDJ change date instead of when our extension ran. We dedup on
+    // (mdj, createdAt) for those — the same MDJ logged twice on different
+    // dates is two events. Live snapshots (no createdAt) only dedup against
+    // the most recent stored MDJ.
+    if (createdAt) {
+      const at = new Date(createdAt);
+      if (Number.isNaN(at.getTime())) {
+        return errorResponse("Invalid createdAt", 400, origin);
+      }
+      const exists = await prisma.mDJHistory.findFirst({
+        where: { characterId: character.id, mdj: trimmedMdj, createdAt: at },
+      });
+      if (exists) {
+        return jsonResponse(
+          { code: "duplicate", message: "MDJ already logged at this date" },
+          { status: 409, origin }
+        );
+      }
+      const entry = await prisma.mDJHistory.create({
+        data: { characterId: character.id, mdj: trimmedMdj, createdAt: at },
+      });
+      logger.info(`MDJ entry (backdated) for ${character.name} (${targetId})`);
+      return jsonResponse(entry, { origin });
+    }
+
+    const mostRecent = await prisma.mDJHistory.findFirst({
+      where: { characterId: character.id },
+      orderBy: { createdAt: "desc" },
+    });
+    if (mostRecent && mostRecent.mdj.trim() === trimmedMdj) {
+      return jsonResponse(
+        { code: "duplicate", message: "MDJ unchanged" },
+        { status: 409, origin }
+      );
+    }
+
+    const entry = await prisma.mDJHistory.create({
+      data: { characterId: character.id, mdj: trimmedMdj },
+    });
+    logger.info(`MDJ entry for ${character.name} (${targetId})`);
+    return jsonResponse(entry, { origin });
+  } catch (err) {
+    logger.error(`Error updating MDJ: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
+  }
 }
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Credentials": "true",
-  };
+
+export async function GET(request, context) {
+  const origin = request.headers.get("origin");
+  try {
+    const { id } = await context.params;
+    const targetId = parseTargetId(id);
+    if (targetId === null) return errorResponse("Invalid targetId", 400, origin);
+
+    const denied = await authorize(request, targetId, origin);
+    if (denied) return denied;
+
+    const character = await prisma.characters.findUnique({ where: { targetId } });
+    if (!character) return errorResponse("Character not found", 404, origin);
+
+    const history = await prisma.mDJHistory.findMany({
+      where: { characterId: character.id },
+      orderBy: { createdAt: "desc" },
+    });
+    return jsonResponse(history, { origin });
+  } catch (err) {
+    logger.error(`Error fetching MDJ history: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
+  }
+}
+
+export async function OPTIONS(request) {
+  return preflight(request.headers.get("origin"));
 }

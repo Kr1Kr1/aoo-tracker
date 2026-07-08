@@ -1,160 +1,77 @@
-import { PrismaClient } from "@prisma/client";
+import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { jsonResponse, errorResponse, preflight, parseTargetId } from "@/lib/api";
+import { getCallerContext, canAccessTargetId } from "@/lib/authContext";
 
-const prisma = new PrismaClient();
-
-// POST: Add a new history entry for a character
-export async function POST(req, context) {
-    try {
-      const params = await context.params;
-      const { id: targetId } = params;
-  
-      if (!targetId) {
-        logger.error("[API] Missing targetId in request parameters");
-        return new Response(JSON.stringify({ error: "Character targetId is required" }), {
-          status: 400,
-          headers: corsHeaders(),
-        });
-      }
-  
-      const parsedTargetId = parseInt(targetId, 10);
-      if (isNaN(parsedTargetId)) {
-        logger.error("[API] Invalid targetId provided");
-        return new Response(JSON.stringify({ error: "Invalid character targetId" }), {
-          status: 400,
-          headers: corsHeaders(),
-        });
-      }
-  
-      const body = await req.json();
-      let { story } = body;
-  
-      // Allow empty or missing story
-      story = story ? story.trim() : ""; // Set to empty string if not provided
-  
-      // Validate character existence by `targetId`
-      const character = await prisma.characters.findUnique({
-        where: { targetId: parsedTargetId },
-      });
-  
-      if (!character) {
-        logger.error(`[API] Character with targetId ${parsedTargetId} does not exist`);
-        return new Response(JSON.stringify({ error: "Invalid character targetId" }), {
-          status: 400,
-          headers: corsHeaders(),
-        });
-      }
-  
-      // Fetch the most recent story for the character
-      const mostRecentStory = await prisma.characterHistory.findFirst({
-        where: { characterId: character.id },
-        orderBy: { modifiedAt: "desc" },
-      });
-  
-      if (mostRecentStory && mostRecentStory.story.trim() === story) {
-        logger.info(`[API] Duplicate story content detected for character with targetId ${parsedTargetId}`);
-        return new Response(
-          JSON.stringify({
-            message: "Content is identical to the most recent story. No update performed.",
-          }),
-          {
-            status: 200, // Success
-            headers: corsHeaders(),
-          }
-        );
-      }
-  
-      // Create a new CharacterHistory entry
-      const historyEntry = await prisma.characterHistory.create({
-        data: {
-          characterId: character.id,
-          story, // Allow empty string as valid content
-        },
-      });
-  
-      logger.info(`[API] Created new story entry for character with targetId ${parsedTargetId}: ${JSON.stringify(historyEntry)}`);
-      return new Response(JSON.stringify(historyEntry), {
-        headers: corsHeaders(),
-      });
-    } catch (error) {
-      logger.error(`[API] Error updating story for character: ${error.message}`, { stack: error.stack });
-      return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-        status: 500,
-        headers: corsHeaders(),
-      });
-    }
+async function authorize(request, targetId, origin) {
+  const ctx = await getCallerContext(request);
+  if (!ctx) return errorResponse("Unauthorized", 401, origin);
+  if (!canAccessTargetId(ctx, targetId)) return errorResponse("Forbidden", 403, origin);
+  return null;
 }
 
-// GET: Fetch the history and/or logs for a character
-export async function GET(req, context) {
+export async function POST(request, context) {
+  const origin = request.headers.get("origin");
   try {
-    const params = await context.params;
-    const { id: targetId } = params;
-    const { searchParams } = new URL(req.url);
-    const type = searchParams.get('type'); // 'history', 'logs', or undefined (both)
-    const attribute = searchParams.get('attribute'); // Filter logs by attribute (e.g., 'xp')
+    const { id } = await context.params;
+    const targetId = parseTargetId(id);
+    if (targetId === null) return errorResponse("Invalid targetId", 400, origin);
 
-    if (!targetId) {
-      return new Response(JSON.stringify({ error: "Missing targetId in the request" }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
+    const denied = await authorize(request, targetId, origin);
+    if (denied) return denied;
 
-    const parsedTargetId = parseInt(targetId, 10);
+    const body = await request.json();
+    const story = (body.story || "").trim();
 
-    if (isNaN(parsedTargetId)) {
-      return new Response(JSON.stringify({ error: "Invalid targetId format" }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
+    const character = await prisma.characters.findUnique({ where: { targetId } });
+    if (!character) return errorResponse("Character not found", 404, origin);
 
-    // Fetch the character by targetId
-    const character = await prisma.characters.findUnique({
-      where: { targetId: parsedTargetId },
+    const mostRecent = await prisma.characterHistory.findFirst({
+      where: { characterId: character.id },
+      orderBy: { modifiedAt: "desc" },
     });
-
-    if (!character) {
-      return new Response(JSON.stringify({ error: "Character not found" }), {
-        status: 404,
-        headers: corsHeaders(),
-      });
+    if (mostRecent && mostRecent.story.trim() === story) {
+      return jsonResponse(
+        { code: "duplicate", message: "Story unchanged" },
+        { status: 409, origin }
+      );
     }
 
-    // Fetch the character history
+    const entry = await prisma.characterHistory.create({
+      data: { characterId: character.id, story },
+    });
+    logger.info(`Story entry for ${character.name} (${targetId})`);
+    return jsonResponse(entry, { origin });
+  } catch (err) {
+    logger.error(`Error updating story: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
+  }
+}
+
+export async function GET(request, context) {
+  const origin = request.headers.get("origin");
+  try {
+    const { id } = await context.params;
+    const targetId = parseTargetId(id);
+    if (targetId === null) return errorResponse("Invalid targetId", 400, origin);
+
+    const denied = await authorize(request, targetId, origin);
+    if (denied) return denied;
+
+    const character = await prisma.characters.findUnique({ where: { targetId } });
+    if (!character) return errorResponse("Character not found", 404, origin);
+
     const history = await prisma.characterHistory.findMany({
       where: { characterId: character.id },
       orderBy: { modifiedAt: "desc" },
     });
-
-    logger.info(`[API] Retrieved ${history.length} history entries for character with id ${character.id}`);
-    logger.info(`[API] Full history entries: ${JSON.stringify(history, null, 2)}`);
-
-    return new Response(JSON.stringify(history), {
-      headers: { "Content-Type": "application/json" },
-    });
-  } catch (error) {
-    console.error("Error in GET /api/characters/[id]/history:", error);
-    return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-      status: 500,
-    });
+    return jsonResponse(history, { origin });
+  } catch (err) {
+    logger.error(`Error fetching story history: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
   }
 }
 
-// OPTIONS: Handle CORS preflight
-export async function OPTIONS(req) {
-  return new Response(null, {
-    headers: corsHeaders(),
-    status: 204, // No content
-  });
-}
-
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Credentials": "true",
-  };
+export async function OPTIONS(request) {
+  return preflight(request.headers.get("origin"));
 }

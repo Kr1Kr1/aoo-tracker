@@ -1,136 +1,103 @@
-import { PrismaClient } from "@prisma/client";
+import prisma from "@/lib/prisma";
+import { logger } from "@/lib/logger";
+import { jsonResponse, errorResponse, preflight } from "@/lib/api";
 import { parseDate } from "@/lib/dateUtils";
+import { getCallerContext, visibleCharacterIds, canAccessTargetId } from "@/lib/authContext";
 
-const prisma = new PrismaClient();
-
-export async function GET(req) {
+export async function GET(request) {
+  const origin = request.headers.get("origin");
   try {
-    // Extract query parameters for offset and limit
-    const url = new URL(req.url);
+    const ctx = await getCallerContext(request);
+    if (!ctx) return errorResponse("Unauthorized", 401, origin);
+
+    const url = new URL(request.url);
     const offset = parseInt(url.searchParams.get("offset") || "0", 10);
     const limit = parseInt(url.searchParams.get("limit") || "10", 10);
 
-    console.log(`[API] Fetching events with offset=${offset}, limit=${limit}`);
+    const allowed = await visibleCharacterIds(ctx);
+    const where = allowed === null ? {} : { characterId: { in: allowed } };
 
-    // Fetch events with pagination, including character and faction details
-    const events = await prisma.events.findMany({
-      skip: offset,
-      take: limit,
-      orderBy: {
-        calculatedDate: "desc", // Ensure consistent ordering
-      },
-      include: {
-        character: {
-          include: {
-            faction: true, // Include faction details
-          },
-        },
-      },
-    });
-
-    // Enhance events by including faction info of the character in `fromCol`
-    const enrichedEvents = await Promise.all(
-      events.map(async (event) => {
-        // Extract targetId from `fromCol` using regex
-        const match = event.fromCol.match(/\(mat\.(\d+)\)/);
-        if (!match) return { ...event, fromCharacterFaction: null }; // If no match, return as is
-
-        const targetId = parseInt(match[1], 10);
-
-        // Fetch the character from `Characters` table using targetId
-        const fromCharacter = await prisma.characters.findUnique({
-          where: { targetId },
-          include: {
-            faction: true, // Include faction details
-          },
-        });
-
-        return {
-          ...event,
-          fromCharacterFaction: fromCharacter?.faction || null,
-        };
-      })
-    );
-
-    // Count total events for pagination metadata
-    const totalEvents = await prisma.events.count();
-
-    // Return the events and metadata
-    return new Response(
-      JSON.stringify({
-        events: enrichedEvents,
-        total: totalEvents,
-        offset,
-        limit,
+    const [events, totalEvents] = await Promise.all([
+      prisma.events.findMany({
+        where,
+        skip: offset,
+        take: limit,
+        orderBy: { calculatedDate: "desc" },
+        include: { character: { include: { faction: true } } },
       }),
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
-      }
+      prisma.events.count({ where }),
+    ]);
+
+    const fromIds = Array.from(
+      new Set(
+        events
+          .map((e) => e.fromCol.match(/\(mat\.(\d+)\)/)?.[1])
+          .filter(Boolean)
+          .map((id) => parseInt(id, 10))
+      )
     );
-  } catch (error) {
-    console.error("[API] Error fetching events:", error);
-    return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    const fromCharacters = fromIds.length
+      ? await prisma.characters.findMany({
+          where: { targetId: { in: fromIds } },
+          include: { faction: true },
+        })
+      : [];
+    const fromByTargetId = new Map(fromCharacters.map((c) => [c.targetId, c]));
+
+    const enriched = events.map((event) => {
+      const match = event.fromCol.match(/\(mat\.(\d+)\)/);
+      const targetId = match ? parseInt(match[1], 10) : null;
+      const fromCharacter = targetId != null ? fromByTargetId.get(targetId) : null;
+      return { ...event, fromCharacterFaction: fromCharacter?.faction || null };
     });
+
+    return jsonResponse(
+      { events: enriched, total: totalEvents, offset, limit },
+      { origin }
+    );
+  } catch (err) {
+    logger.error(`Error fetching events: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
   }
 }
 
-export async function POST(req) {
+export async function POST(request) {
+  const origin = request.headers.get("origin");
   try {
-    const body = await req.json();
-    console.log("[API] Parsed request body:", body);
+    const ctx = await getCallerContext(request);
+    if (!ctx) return errorResponse("Unauthorized", 401, origin);
 
-    const { event, details, fromCol, withWhom, date, territory, source = "Manual", playerId } = body;
+    const body = await request.json();
+    const {
+      event,
+      details,
+      fromCol,
+      withWhom,
+      date,
+      territory,
+      source = "Manual",
+      playerId,
+    } = body;
 
     if (!event || !fromCol || !date || !territory || !playerId) {
-      console.error("[API] Missing required fields in the request:", {
-        event,
-        fromCol,
-        date,
-        territory,
-        playerId,
-      });
-      return new Response(JSON.stringify({ error: "Missing required fields" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-      });
+      return errorResponse("Missing required fields", 400, origin);
+    }
+    if (!canAccessTargetId(ctx, playerId)) {
+      return errorResponse("Forbidden: playerId not linked to this user", 403, origin);
     }
 
     const calculatedDate = parseDate(date);
-    console.log("[API] Parsed calculatedDate:", calculatedDate);
-
     if (!calculatedDate) {
-      console.error("[API] Failed to parse date:", date);
-      return new Response(JSON.stringify({ error: "Invalid date format" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-      });
+      return errorResponse("Invalid date format", 400, origin);
     }
 
-    // Fetch the character ID using playerId
-    console.log("[API] Looking up character with playerId:", playerId);
     const character = await prisma.characters.findUnique({
-      where: { targetId : playerId },
+      where: { targetId: playerId },
     });
-    console.log("[API] Query result for character:", character);
-
     if (!character) {
-      console.error("[API] Character not found for playerId:", playerId);
-      return new Response(JSON.stringify({ error: "Character not found" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-      });
+      return errorResponse(`Character not found for playerId ${playerId}`, 404, origin);
     }
 
-    const characterId = character.id;
-
-    console.log("[API] Resolved characterId:", characterId);
-
-    // Check for duplicates
     const existingEvent = await prisma.events.findFirst({
       where: {
         event,
@@ -138,22 +105,16 @@ export async function POST(req) {
         calculatedDate,
         fromCol,
         source,
-        characterId,
+        characterId: character.id,
       },
     });
-
     if (existingEvent) {
-      console.log("[API] Duplicate event detected:", existingEvent);
-      return new Response(JSON.stringify({ error: "Duplicate event", existingEvent }), {
-        status: 409,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
-      });
+      return jsonResponse(
+        { code: "duplicate", existingEvent },
+        { status: 409, origin }
+      );
     }
 
-    // Create new event
     const newEvent = await prisma.events.create({
       data: {
         event,
@@ -164,33 +125,16 @@ export async function POST(req) {
         calculatedDate,
         territory,
         source,
-        characterId,
+        characterId: character.id,
       },
     });
-
-    return new Response(JSON.stringify(newEvent), {
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      },
-    });
-  } catch (error) {
-    console.error("[API] Error processing the request:", error);
-    return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
+    return jsonResponse(newEvent, { origin });
+  } catch (err) {
+    logger.error(`Error creating event: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
   }
 }
 
-
-// Handle OPTIONS preflight requests
-export async function OPTIONS() {
-  return new Response(null, {
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    },
-  });
+export async function OPTIONS(request) {
+  return preflight(request.headers.get("origin"));
 }

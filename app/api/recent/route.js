@@ -1,64 +1,79 @@
-import { PrismaClient } from "@prisma/client";
+import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { jsonResponse, errorResponse, preflight } from "@/lib/api";
+import { getCallerContext, visibleTargetIds, visibleCharacterIds } from "@/lib/authContext";
 
-const prisma = new PrismaClient();
+// Allowlist of models exposed to the client. Each entry knows how to
+// scope queries to the caller's accessible characters.
+const ALLOWED_MODELS = {
+  characters: {
+    include: { faction: true },
+    scope: (targetIds) => (targetIds === null ? {} : { targetId: { in: targetIds } }),
+    needsCharacterIds: false,
+  },
+  events: {
+    include: { character: { include: { faction: true } } },
+    scope: (characterIds) => (characterIds === null ? {} : { characterId: { in: characterIds } }),
+    needsCharacterIds: true,
+  },
+  forums: { include: { faction: true }, scope: () => ({}), needsCharacterIds: false },
+  topics: { include: {}, scope: () => ({}), needsCharacterIds: false },
+  messages: {
+    include: { character: true },
+    scope: (characterIds) => (characterIds === null ? {} : { characterId: { in: characterIds } }),
+    needsCharacterIds: true,
+  },
+  equipment: {
+    include: {},
+    scope: (characterIds) => (characterIds === null ? {} : { characterId: { in: characterIds } }),
+    needsCharacterIds: true,
+  },
+};
 
-export async function GET(req) {
+export async function GET(request) {
+  const origin = request.headers.get("origin");
   try {
-    const { searchParams } = new URL(req.url);
-    const model = searchParams.get("model"); // e.g., "Characters", "Events"
-    const days = parseInt(searchParams.get("days") || "7", 10); // Default to 7 days
+    const ctx = await getCallerContext(request);
+    if (!ctx) return errorResponse("Unauthorized", 401, origin);
 
-    if (!model) {
-      logger.error("[API] Missing 'model' query parameter");
-      return new Response(
-        JSON.stringify({ error: "Missing 'model' query parameter" }),
-        { status: 400 }
+    const { searchParams } = new URL(request.url);
+    const model = searchParams.get("model");
+    const days = parseInt(searchParams.get("days") || "7", 10);
+
+    if (!model || !(model in ALLOWED_MODELS)) {
+      return errorResponse(
+        `Invalid model. Allowed: ${Object.keys(ALLOWED_MODELS).join(", ")}`,
+        400,
+        origin
       );
     }
 
-    if (!(model in prisma)) {
-      logger.error(`[API] Invalid model: ${model}`);
-      return new Response(JSON.stringify({ error: `Invalid model: ${model}` }), {
-        status: 400,
-      });
-    }
+    const config = ALLOWED_MODELS[model];
+    const scopeKeys = config.needsCharacterIds
+      ? await visibleCharacterIds(ctx)
+      : visibleTargetIds(ctx);
+    const scopeWhere = config.scope(scopeKeys);
 
     const dateThreshold = new Date();
     dateThreshold.setDate(dateThreshold.getDate() - days);
 
-    logger.info(
-      `[API] Fetching recent records from '${model}' created in the last ${days} days`
-    );
-
     const records = await prisma[model].findMany({
       where: {
-        createdAt: {
-          gte: dateThreshold,
-        },
+        ...scopeWhere,
+        createdAt: { gte: dateThreshold },
       },
-      include: model === "Characters" ? {
-        faction: true
-      } : undefined,
-      orderBy: {
-        createdAt: "desc",
-      },
+      ...(Object.keys(config.include || {}).length ? { include: config.include } : {}),
+      orderBy: { createdAt: "desc" },
     });
 
-    logger.info(
-      `[API] Retrieved ${records.length} records from '${model}' in the last ${days} days`
-    );
-
-    return new Response(JSON.stringify(records), {
-      headers: { "Content-Type": "application/json" },
-      status: 200,
-    });
-  } catch (error) {
-    logger.error(`[API] Error fetching recent records: ${error.message}`, {
-      stack: error.stack,
-    });
-    return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-      status: 500,
-    });
+    logger.info(`Recent ${model}: ${records.length} records over ${days}d for ${ctx.username}`);
+    return jsonResponse(records, { origin });
+  } catch (err) {
+    logger.error(`Error fetching recent records: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
   }
+}
+
+export async function OPTIONS(request) {
+  return preflight(request.headers.get("origin"));
 }

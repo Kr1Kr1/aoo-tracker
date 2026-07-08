@@ -1,214 +1,104 @@
-import { PrismaClient } from "@prisma/client";
-import { logger } from "@/lib/logger"; // Custom logger
+import prisma from "@/lib/prisma";
+import { logger } from "@/lib/logger";
+import { jsonResponse, errorResponse, preflight, parseTargetId } from "@/lib/api";
+import { getCallerContext, canAccessTargetId } from "@/lib/authContext";
 
-const prisma = new PrismaClient();
+async function authorize(request, targetId) {
+  const ctx = await getCallerContext(request);
+  if (!ctx) return { error: errorResponse("Unauthorized", 401, request.headers.get("origin")) };
+  if (!canAccessTargetId(ctx, targetId)) {
+    return { error: errorResponse("Forbidden", 403, request.headers.get("origin")) };
+  }
+  return { ctx };
+}
 
-export async function GET(req, context) {
+export async function GET(request, context) {
+  const origin = request.headers.get("origin");
   try {
-    logger.info("[API] Starting to fetch character details...");
-    
-    // Await params destructuring
-    const params = await context.params;
-    const { id: targetId } = params;
+    const { id } = await context.params;
+    const targetId = parseTargetId(id);
+    if (targetId === null) return errorResponse("Invalid targetId", 400, origin);
 
-    if (!targetId) {
-      logger.warn("[API] Missing targetId in the request");
-      return new Response(JSON.stringify({ error: "Missing targetId in the request" }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
+    const { error } = await authorize(request, targetId);
+    if (error) return error;
 
-    const parsedTargetId = parseInt(targetId, 10);
-    if (isNaN(parsedTargetId)) {
-      logger.warn("[API] Invalid targetId format");
-      return new Response(JSON.stringify({ error: "Invalid targetId format" }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
-
-    // Log parsedTargetId
-    logger.debug(`[API] Parsed targetId: ${parsedTargetId}`);
-
-    // Fetch character details from the database
     const character = await prisma.characters.findUnique({
-      where: { targetId: parsedTargetId },
+      where: { targetId },
       include: {
         faction: true,
-        mdjHistory: {
-          orderBy: { createdAt: "desc" },
-          take: 1, // Include most recent MDJ
-        },
-        storyHistory: {
-          orderBy: { modifiedAt: "desc" },
-          take: 1, // Include most recent story
-        },
+        mdjHistory: { orderBy: { createdAt: "desc" }, take: 1 },
+        storyHistory: { orderBy: { modifiedAt: "desc" }, take: 1 },
       },
     });
+    if (!character) return errorResponse("Character not found", 404, origin);
 
-    if (!character) {
-      logger.warn(`[API] Character with targetId ${parsedTargetId} not found`);
-      return new Response(JSON.stringify({ error: "Character not found" }), {
-        status: 404,
-        headers: corsHeaders(),
-      });
-    }
-
-    // Log character data structure for debugging
-    logger.debug(`[API] Character data retrieved: ${JSON.stringify(character, null, 2)}`);
-
-    // Handle potential issues with nested data
-    const mostRecentMDJ = character.mdjHistory?.[0]?.mdj || "Ce personnage est trop éloigné pour l'entendre parler.";
-    const mostRecentStory = character.storyHistory?.[0]?.story || "Je préfère garder cela pour moi.";
-
-    logger.debug(`[API] Most recent MDJ: ${mostRecentMDJ}`);
-    logger.debug(`[API] Most recent Story: ${mostRecentStory}`);
-
-    // Construct response object
     const response = {
       ...character,
-      mostRecentMDJ,
-      mostRecentStory,
+      mostRecentMDJ:
+        character.mdjHistory[0]?.mdj ||
+        "Ce personnage est trop éloigné pour l'entendre parler.",
+      mostRecentStory:
+        character.storyHistory[0]?.story || "Je préfère garder cela pour moi.",
     };
-
-    // Log successful fetch
-    logger.info(`[API] Successfully fetched character: ${character.name}`);
-    return new Response(JSON.stringify(response), {
-      headers: corsHeaders(),
-    });
-  } catch (error) {
-    logger.error(`[API] Error fetching character details: ${error.message}`, { stack: error.stack });
-    return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-      status: 500, headers: corsHeaders(),
-    });
+    return jsonResponse(response, { origin });
+  } catch (err) {
+    logger.error(`Error fetching character: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
   }
 }
 
-export async function PATCH(req, context) {
+export async function PATCH(request, context) {
+  const origin = request.headers.get("origin");
   try {
-    logger.info("[API] Starting to update character details...");
+    const { id } = await context.params;
+    const targetId = parseTargetId(id);
+    if (targetId === null) return errorResponse("Invalid targetId", 400, origin);
 
-    // Await `params` from `context` for dynamic routes
-    const params = await context.params;
-    const { id: targetId } = params;
+    const { error } = await authorize(request, targetId);
+    if (error) return error;
 
-    if (!targetId) {
-      logger.warn("[API] Missing targetId in the request");
-      return new Response(JSON.stringify({ error: "Missing targetId in the request" }), {
-        status: 400,
-      });
+    const updates = await request.json();
+    const { rank, popularity, role, race } = updates;
+    if (!rank && !popularity && !role && !race) {
+      return errorResponse("No valid attributes to update", 400, origin);
     }
 
-    const parsedTargetId = parseInt(targetId, 10);
-    if (isNaN(parsedTargetId)) {
-      logger.warn("[API] Invalid targetId format");
-      return new Response(JSON.stringify({ error: "Invalid targetId format" }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
+    const character = await prisma.characters.findUnique({ where: { targetId } });
+    if (!character) return errorResponse("Character not found", 404, origin);
 
-    // Log parsedTargetId
-    logger.debug(`[API] Parsed targetId: ${parsedTargetId}`);
-
-    // Parse the body for updates
-    const updates = await req.json();
-    const { rank, popularity, role } = updates;
-
-    if (!rank && !popularity && !role) {
-      logger.warn("[API] No valid attributes to update");
-      return new Response(JSON.stringify({ error: "No valid attributes to update" }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
-
-    // Fetch existing character
-    const character = await prisma.characters.findUnique({
-      where: { targetId: parsedTargetId },
-    });
-
-    if (!character) {
-      logger.warn(`[API] Character with targetId ${parsedTargetId} not found`);
-      return new Response(JSON.stringify({ error: "Character not found" }), {
-        status: 404,
-        headers: corsHeaders(),
-      });
-    }
-
-    // Prepare change logs
     const changeLogs = [];
     if (rank && rank !== character.rank) {
-      changeLogs.push({
-        characterId: character.id,
-        attribute: "rank",
-        oldValue: character.rank,
-        newValue: rank,
-      });
+      changeLogs.push({ characterId: character.id, attribute: "rank", oldValue: character.rank, newValue: rank });
     }
     if (popularity && popularity !== character.popularity) {
-      changeLogs.push({
-        characterId: character.id,
-        attribute: "popularity",
-        oldValue: character.popularity,
-        newValue: popularity,
-      });
+      changeLogs.push({ characterId: character.id, attribute: "popularity", oldValue: character.popularity, newValue: popularity });
     }
     if (role && role !== character.role) {
-      changeLogs.push({
-        characterId: character.id,
-        attribute: "role",
-        oldValue: character.role,
-        newValue: role,
-      });
+      changeLogs.push({ characterId: character.id, attribute: "role", oldValue: character.role, newValue: role });
+    }
+    if (race && race !== character.race) {
+      changeLogs.push({ characterId: character.id, attribute: "race", oldValue: character.race, newValue: race });
     }
 
-    // Log the changes for debugging
-    logger.debug(`[API] Change logs prepared: ${JSON.stringify(changeLogs, null, 2)}`);
-
-    // Update the character
-    const updatedCharacter = await prisma.characters.update({
-      where: { targetId: parsedTargetId },
-      data: { rank, popularity, role },
+    const updated = await prisma.characters.update({
+      where: { targetId },
+      data: { rank, popularity, role, race },
     });
 
-    // Save change logs
     if (changeLogs.length > 0) {
       await prisma.characterLog.createMany({
-        data: changeLogs.map((log) => ({
-          ...log,
-          changedAt: new Date(),
-        })),
+        data: changeLogs.map((log) => ({ ...log, changedAt: new Date() })),
       });
     }
 
-    logger.info(`[API] Successfully updated character: ${updatedCharacter.name}`);
-    return new Response(JSON.stringify(updatedCharacter), {
-      headers: corsHeaders(),
-    });
-  } catch (error) {
-    logger.error(`[API] Error updating character: ${error.message}`, { stack: error.stack });
-    return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-      status: 500,
-      headers: corsHeaders(),
-    });
+    logger.info(`Updated character ${updated.name} (${targetId})`);
+    return jsonResponse(updated, { origin });
+  } catch (err) {
+    logger.error(`Error updating character: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
   }
 }
 
-// OPTIONS: Handle CORS preflight
-export async function OPTIONS(req) {
-  return new Response(null, {
-    headers: corsHeaders(),
-    status: 204, // No content
-  });
-}
-
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Credentials": "true",
-  };
+export async function OPTIONS(request) {
+  return preflight(request.headers.get("origin"));
 }

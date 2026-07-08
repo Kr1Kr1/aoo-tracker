@@ -1,11 +1,10 @@
-import { PrismaClient } from "@prisma/client";
-import { logger } from "@/lib/logger"; // Custom logger
+import prisma from "@/lib/prisma";
+import { logger } from "@/lib/logger";
+import { jsonResponse, errorResponse, preflight } from "@/lib/api";
 
-const prisma = new PrismaClient();
-
-export async function GET(req) {
+export async function GET(request) {
+  const origin = request.headers.get("origin");
   try {
-    // Fetch all private forums and their topics
     const forums = await prisma.forums.findMany({
       where: { type: "Private" },
       include: {
@@ -14,15 +13,17 @@ export async function GET(req) {
             author: true,
             messages: {
               include: { character: true },
+              orderBy: { createdAt: "desc" },
+              take: 1,
             },
+            _count: { select: { messages: true } },
           },
         },
-        faction: true, // Include faction details if needed
+        faction: true,
       },
     });
 
-    // Format the response to include only necessary data
-    const formattedForums = forums.map((forum) => ({
+    const formatted = forums.map((forum) => ({
       name: forum.name,
       link: forum.link,
       faction: forum.faction?.name || null,
@@ -34,44 +35,19 @@ export async function GET(req) {
           name: topic.author?.name || "Unknown Author",
           targetId: topic.author?.targetId || null,
         },
-        messageCount: topic.messages.length,
-        lastMessageDate: topic.messages.at(-1)?.date || null,
+        messageCount: topic._count.messages,
+        lastMessageDate: topic.messages[0]?.date || null,
       })),
     }));
 
-    logger.info(`[API] Fetched ${formattedForums.length} private forums with topics`);
-    logger.debug(`[API] Response data: ${JSON.stringify(formattedForums, null, 2)}`);
-
-    return new Response(JSON.stringify({ forums: formattedForums }), {
-      status: 200,
-      headers: corsHeaders(),
-    });
-  } catch (error) {
-    logger.error(`Error in fetching private forums: ${error.message}`, {
-      stack: error.stack,
-    });
-    return new Response(JSON.stringify({ error: "Failed to fetch private forums" }), {
-      status: 500,
-      headers: corsHeaders(),
-    });
-  } finally {
-    await prisma.$disconnect();
+    logger.info(`Returned ${formatted.length} private forums`);
+    return jsonResponse({ forums: formatted }, { origin });
+  } catch (err) {
+    logger.error(`Error fetching private forums: ${err.message}`, { stack: err.stack });
+    return errorResponse("Failed to fetch private forums", 500, origin);
   }
 }
 
-export async function OPTIONS(req) {
-    return new Response(null, {
-      headers: corsHeaders(),
-      status: 204, // No content
-    });
+export async function OPTIONS(request) {
+  return preflight(request.headers.get("origin"));
 }
-
-function corsHeaders() {
-    return {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Allow-Credentials": "true",
-    };
-}
-  

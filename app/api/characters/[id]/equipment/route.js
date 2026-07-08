@@ -1,164 +1,111 @@
-import { PrismaClient } from "@prisma/client";
+import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { jsonResponse, errorResponse, preflight, parseTargetId } from "@/lib/api";
+import { getCallerContext, canAccessTargetId } from "@/lib/authContext";
 
-const prisma = new PrismaClient();
+async function authorize(request, targetId, origin) {
+  const ctx = await getCallerContext(request);
+  if (!ctx) return errorResponse("Unauthorized", 401, origin);
+  if (!canAccessTargetId(ctx, targetId)) return errorResponse("Forbidden", 403, origin);
+  return null;
+}
 
-// POST: Add new equipment for a character
-export async function POST(req, context) {
+// Upserts each equipment item by (characterId, gameId) so re-running the
+// extension scrape doesn't pile up duplicate rows. Items without a gameId
+// fall back to insert (Prisma allows multiple NULLs in a unique constraint).
+export async function POST(request, context) {
+  const origin = request.headers.get("origin");
   try {
-    const params = await context.params;
-    const { id: targetId } = params;
+    const { id } = await context.params;
+    const targetId = parseTargetId(id);
+    if (targetId === null) return errorResponse("Invalid targetId", 400, origin);
 
-    if (!targetId) {
-      logger.error("[API] Missing targetId in request parameters");
-      return new Response(JSON.stringify({ error: "Character targetId is required" }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
+    const denied = await authorize(request, targetId, origin);
+    if (denied) return denied;
+
+    const body = await request.json();
+    const items = Array.isArray(body.equipment) ? body.equipment : [body];
+    if (items.length === 0) {
+      return jsonResponse({ results: [], errors: [] }, { origin });
     }
 
-    const parsedTargetId = parseInt(targetId, 10);
-    if (isNaN(parsedTargetId)) {
-      logger.error("[API] Invalid targetId provided");
-      return new Response(JSON.stringify({ error: "Invalid character targetId" }), {
-        status: 400,
-        headers: corsHeaders(),
-      });
-    }
-
-    const body = await req.json();
-    
-    // Handle both single item and array of items
-    const equipmentItems = Array.isArray(body.equipment) ? body.equipment : [body];
-    
-    if (equipmentItems.length === 0) {
-      logger.info("[API] No equipment items to process");
-      return new Response(JSON.stringify({ message: "No equipment items to process" }), {
-        status: 200,
-        headers: corsHeaders(),
-      });
-    }
-
-    // Validate character existence by `targetId`
-    const character = await prisma.characters.findUnique({
-      where: { targetId: parsedTargetId },
-    });
-
-    if (!character) {
-      logger.error(`[API] Character with targetId ${parsedTargetId} does not exist`);
-      return new Response(JSON.stringify({ error: "Invalid character targetId" }), {
-        status: 404,
-        headers: corsHeaders(),
-      });
-    }
+    const character = await prisma.characters.findUnique({ where: { targetId } });
+    if (!character) return errorResponse("Character not found", 404, origin);
 
     const results = [];
     const errors = [];
 
-    // Process each equipment item
-    for (const item of equipmentItems) {
-      const { name, description, type, price, imageUrl, thumbnailUrl } = item;
-
+    for (const item of items) {
+      const { id: gameId, name, description, type, price, imageUrl, thumbnailUrl } = item;
       if (!name || !type) {
-        errors.push({ item, error: "Name and type are required for equipment" });
+        errors.push({ item, error: "Name and type are required" });
         continue;
       }
 
+      const data = {
+        gameId: gameId ?? null,
+        name,
+        description: description || "No description provided",
+        type,
+        price: price != null ? parseInt(price, 10) || null : null,
+        imageUrl: imageUrl || null,
+        thumbnailUrl: thumbnailUrl || null,
+        characterId: character.id,
+      };
+
       try {
-        // Create a new equipment entry
-        const equipmentEntry = await prisma.equipment.create({
-          data: {
-            name,
-            description: description || "No description provided",
-            type,
-            price: price || null,
-            imageUrl: imageUrl || null,
-            thumbnailUrl: thumbnailUrl || null,
-            characterId: character.id,
-          },
-        });
-        results.push(equipmentEntry);
-        logger.info(`[API] Created equipment '${name}' for character ${parsedTargetId}`);
-      } catch (error) {
-        errors.push({ item, error: error.message });
-        logger.error(`[API] Failed to create equipment '${name}': ${error.message}`);
+        let entry;
+        if (gameId) {
+          entry = await prisma.equipment.upsert({
+            where: { characterId_gameId: { characterId: character.id, gameId } },
+            create: data,
+            update: data,
+          });
+        } else {
+          entry = await prisma.equipment.create({ data });
+        }
+        results.push(entry);
+      } catch (err) {
+        errors.push({ item, error: err.message });
+        logger.error(`Equipment '${name}' failed for ${targetId}: ${err.message}`);
       }
     }
 
-    // Return response with results and any errors
-    return new Response(JSON.stringify({ results, errors }), {
-      status: errors.length > 0 ? 207 : 200, // 207 Multi-Status if there are partial failures
-      headers: corsHeaders(),
-    });
-  } catch (error) {
-    logger.error(`[API] Error adding equipment for character: ${error.message}`, { stack: error.stack });
-    return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-      status: 500,
-      headers: corsHeaders(),
-    });
+    logger.info(`Equipment for ${targetId}: ${results.length} ok, ${errors.length} errors`);
+    return jsonResponse(
+      { results, errors },
+      { status: errors.length > 0 ? 207 : 200, origin }
+    );
+  } catch (err) {
+    logger.error(`Error processing equipment: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
   }
 }
 
-// GET: Fetch all equipment for a character
-export async function GET(req, context) {
+export async function GET(request, context) {
+  const origin = request.headers.get("origin");
   try {
-    const params = await context.params;
-    const { id: targetId } = params;
+    const { id } = await context.params;
+    const targetId = parseTargetId(id);
+    if (targetId === null) return errorResponse("Invalid targetId", 400, origin);
 
-    if (!targetId) {
-      return new Response(JSON.stringify({ error: "Missing targetId in the request" }), {
-        status: 400,
-      });
-    }
+    const denied = await authorize(request, targetId, origin);
+    if (denied) return denied;
 
-    const parsedTargetId = parseInt(targetId, 10);
+    const character = await prisma.characters.findUnique({ where: { targetId } });
+    if (!character) return errorResponse("Character not found", 404, origin);
 
-    if (isNaN(parsedTargetId)) {
-      return new Response(JSON.stringify({ error: "Invalid targetId format" }), {
-        status: 400,
-      });
-    }
-
-    // Fetch the character by targetId
-    const character = await prisma.characters.findUnique({
-      where: { targetId: parsedTargetId },
-    });
-
-    if (!character) {
-      return new Response(JSON.stringify({ error: "Character not found" }), {
-        status: 404,
-      });
-    }
-
-    // Fetch the character's equipment
     const equipment = await prisma.equipment.findMany({
       where: { characterId: character.id },
       orderBy: { id: "asc" },
     });
-
-    return new Response(JSON.stringify(equipment), {
-      headers: { "Content-Type": "application/json" },
-    });
-  } catch (error) {
-    logger.error("Error in GET /api/characters/[id]/equipment:", error);
-    return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-      status: 500,
-    });
+    return jsonResponse(equipment, { origin });
+  } catch (err) {
+    logger.error(`Error fetching equipment: ${err.message}`, { stack: err.stack });
+    return errorResponse("Internal Server Error", 500, origin);
   }
 }
 
-// OPTIONS: Handle CORS preflight
-export async function OPTIONS(req) {
-  return new Response(null, {
-    headers: corsHeaders(),
-    status: 204, // No content
-  });
-}
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Credentials": "true",
-  };
+export async function OPTIONS(request) {
+  return preflight(request.headers.get("origin"));
 }
