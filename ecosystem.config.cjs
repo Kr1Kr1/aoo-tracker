@@ -4,7 +4,7 @@ module.exports = {
       name: "aoo-tracker",
       script: "pnpm",
       args: "run dev",
-      cwd: "/Users/kr1/aob/sauron/aoo-tracker",
+      cwd: "/Users/kr1/aom/aoo-tracker",
       interpreter: "node",
       autorestart: true,
       watch: ["app/**/*", "prisma/**/*", "public/**/*"],
