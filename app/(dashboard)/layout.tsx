@@ -8,8 +8,11 @@ import {
   BookOpen,
   Shield,
   Map as MapIcon,
+  History,
   Image,
   Trophy,
+  Mail,
+  Wrench,
 } from "lucide-react";
 import {
   Breadcrumb,
@@ -86,9 +89,20 @@ function DesktopNav() {
           <Shield className="h-5 w-5" />
         </NavItem>
 
+        <NavItem href="/forum/missives" label="Missives">
+          <Mail className="h-5 w-5" />
+        </NavItem>
+
+        <NavItem href="/forum/hrp" label="HRP Forum">
+          <Wrench className="h-5 w-5" />
+        </NavItem>
+
         {/* Map Section */}
         <NavItem href="/map" label="Map">
           <MapIcon className="h-5 w-5" />
+        </NavItem>
+        <NavItem href="/map/replay" label="Map Replay">
+          <History className="h-5 w-5" />
         </NavItem>
 
         {/* Assets Section */}
@@ -182,6 +196,22 @@ function MobileNav() {
             Private Forum
           </Link>
 
+          <Link
+            href="/forum/missives"
+            className="flex items-center gap-4 px-2.5 text-muted-foreground hover:text-foreground"
+          >
+            <Mail className="h-5 w-5" />
+            Missives
+          </Link>
+
+          <Link
+            href="/forum/hrp"
+            className="flex items-center gap-4 px-2.5 text-muted-foreground hover:text-foreground"
+          >
+            <Wrench className="h-5 w-5" />
+            HRP Forum
+          </Link>
+
           {/* Map Section */}
           <Link
             href="/map"
@@ -189,6 +219,13 @@ function MobileNav() {
           >
             <MapIcon className="h-5 w-5" />
             Map
+          </Link>
+          <Link
+            href="/map/replay"
+            className="flex items-center gap-4 px-2.5 text-muted-foreground hover:text-foreground"
+          >
+            <History className="h-5 w-5" />
+            Map Replay
           </Link>
 
           {/* Assets Section */}

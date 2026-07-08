@@ -2,66 +2,38 @@
 
 import { useState, useEffect } from "react";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { getFactionColor } from "@/lib/factionColors";
+
+interface RecentCharacter {
+  targetId: number;
+  name: string;
+  faction?: { name: string } | null;
+  createdAt: string;
+}
 
 export default function DashboardSummary() {
-  const [recentData, setRecentData] = useState([]);
+  const [recentData, setRecentData] = useState<RecentCharacter[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("all");
 
-  const fetchRecentData = async (model, days = 7) => {
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/recent?model=${model}&days=${days}`);
-      if (response.ok) {
-        const data = await response.json();
-        setRecentData(data);
-      } else {
-        console.error("Failed to fetch recent data:", await response.text());
-      }
-    } catch (error) {
-      console.error("Error fetching recent data:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchRecentData("Characters", 7);
+    setLoading(true);
+    fetch(`/api/recent?model=characters&days=7`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => setRecentData(data))
+      .catch((err) => console.error("[dashboard] recent fetch failed:", err))
+      .finally(() => setLoading(false));
   }, []);
 
-  const filteredData = recentData.filter(record => {
+  const filteredData = recentData.filter((record) => {
     if (filter === "pj") return record.targetId > 0;
     if (filter === "pnj") return record.targetId < 0;
     return true;
   });
-
-  const getFactionColor = (faction) => {
-    switch (faction?.toLowerCase()) {
-      case "le royaume des cimes":
-        return "bg-amber-200 text-amber-800";
-      case "saruta & frères":
-        return "bg-yellow-200 text-yellow-800";
-      case "eryn dolen":
-        return "bg-green-200 text-green-800";
-      case "dieux":
-        return "bg-purple-200 text-purple-800";
-      case "la forge sacrée":
-        return "bg-red-200 text-red-800";
-      case "praetorium":
-        return "bg-orange-200 text-orange-800";
-      case "le tertre sauvage":
-        return "bg-emerald-200 text-emerald-800";
-      case "redoraan":
-        return "bg-rose-200 text-rose-800";
-      case "apatrides":
-        return "bg-gray-300 text-gray-800";
-      case "bahamut":
-        return "bg-indigo-200 text-indigo-800";
-      default:
-        return "bg-gray-200 text-gray-800";
-    }
-  };
 
   return (
     <div className="flex-1 w-full">

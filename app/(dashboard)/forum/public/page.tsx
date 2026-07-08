@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import prisma from '@/lib/prisma';
 import {
   Card,
   CardContent,
@@ -6,10 +6,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import Link from 'next/link';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-
-const prisma = new PrismaClient();
+import { TopicList } from "../topic-list";
 
 async function getPublicForums() {
   const forums = await prisma.forums.findMany({
@@ -21,19 +19,14 @@ async function getPublicForums() {
         include: {
           messages: {
             include: {
-              character: true
+              character: { select: { id: true, name: true } }
             },
-            orderBy: {
-              createdAt: 'desc'
-            },
-            take: 1
+            orderBy: { id: 'asc' }
           },
-          author: true
+          author: { select: { id: true, name: true } }
         },
         orderBy: {
-          messages: {
-            _count: 'desc'
-          }
+          updatedAt: 'desc'
         }
       }
     }
@@ -71,33 +64,7 @@ export default async function PublicForums() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
-                    {forum.topics.map((topic) => {
-                      const lastMessage = topic.messages[0];
-                      return (
-                        <div key={topic.id} className="flex justify-between items-center border-b pb-4">
-                          <div>
-                            <Link 
-                              href={topic.link} 
-                              className="text-lg font-medium hover:underline"
-                            >
-                              {topic.name}
-                            </Link>
-                            <div className="text-sm text-gray-500">
-                              Started by {topic.author.name}
-                            </div>
-                          </div>
-                          {lastMessage && (
-                            <div className="text-sm text-gray-500 text-right">
-                              Last reply by {lastMessage.character.name}
-                              <br />
-                              {new Date(lastMessage.createdAt).toLocaleDateString()}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <TopicList topics={forum.topics} />
                 </CardContent>
               </Card>
             </div>

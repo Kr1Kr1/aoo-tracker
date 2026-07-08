@@ -10,6 +10,19 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { getFactionColor } from "@/lib/factionColors";
+
+interface EventRow {
+  id: number;
+  event: string;
+  details: string | null;
+  fromCol: string;
+  withWhom: string | null;
+  territory: string;
+  source: string;
+  calculatedDate: string | null;
+  fromCharacterFaction: { name: string } | null;
+}
 
 export function EventsTable({
   events,
@@ -18,40 +31,13 @@ export function EventsTable({
   onNextPage,
   onPrevPage,
 }: {
-  events: any[];
+  events: EventRow[];
   totalEvents: number;
   offset: number;
   onNextPage: () => void;
   onPrevPage: () => void;
 }) {
   const eventsPerPage = 5;
-
-  const getFactionColor = (faction) => {
-    switch (faction?.toLowerCase()) {
-      case "le royaume des cimes":
-        return "bg-amber-200 text-amber-800";
-      case "saruta & frères":
-        return "bg-yellow-200 text-yellow-800";
-      case "eryn dolen":
-        return "bg-green-200 text-green-800";
-      case "dieux":
-        return "bg-purple-200 text-purple-800";
-      case "la forge sacrée":
-        return "bg-red-200 text-red-800";
-      case "praetorium":
-        return "bg-orange-200 text-orange-800";
-      case "le tertre sauvage":
-        return "bg-emerald-200 text-emerald-800";
-      case "redoraan":
-        return "bg-rose-200 text-rose-800";
-      case "apatrides":
-        return "bg-gray-300 text-gray-800";
-      case "bahamut":
-        return "bg-indigo-200 text-indigo-800";
-      default:
-        return "bg-gray-200 text-gray-800";
-    }
-  };
 
   const extractCharacterInfo = (fromCol: string) => {
     const match = fromCol.match(/\(mat\.(\d+)\)/); // Match "Name (mat.<ID>)"

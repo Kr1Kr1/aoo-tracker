@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
 import {
   Card,
@@ -21,34 +21,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { PencilIcon } from "@/components/icons";
-
-// Function to determine faction color
-const getFactionColor = (faction: string | undefined): string => {
-  switch (faction?.toLowerCase()) {
-    case "le royaume des cimes":
-      return "bg-amber-200 text-amber-800";
-    case "saruta & frères":
-      return "bg-yellow-200 text-yellow-800";
-    case "eryn dolen":
-      return "bg-green-200 text-green-800";
-    case "dieux":
-      return "bg-purple-200 text-purple-800";
-    case "la forge sacrée":
-      return "bg-red-200 text-red-800";
-    case "praetorium":
-      return "bg-orange-200 text-orange-800";
-    case "le tertre sauvage":
-      return "bg-emerald-200 text-emerald-800";
-    case "redoraan":
-      return "bg-rose-200 text-rose-800";
-    case "apatrides":
-      return "bg-gray-300 text-gray-800";
-    case "bahamut":
-      return "bg-indigo-200 text-indigo-800";
-    default:
-      return "bg-gray-200 text-gray-800";
-  }
-};
+import { getFactionColor } from "@/lib/factionColors";
 
 interface PageParams {
   targetId: string;
@@ -94,9 +67,9 @@ interface StoryHistory {
   story?: string;
 }
 
-const CharacterDetailsPage = ({ params }: { params: PageParams }) => {
+const CharacterDetailsPage = ({ params }: { params: Promise<PageParams> }) => {
   const router = useRouter();
-  const { targetId } = params;
+  const { targetId } = use(params);
   const [character, setCharacter] = useState<Character | null>(null);
   const [mdjHistory, setMdjHistory] = useState<MdjHistoryEntry[]>([]);
   const [storyHistory, setStoryHistory] = useState<StoryHistory | null>(null);

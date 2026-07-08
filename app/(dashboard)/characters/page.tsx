@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StarIcon } from "@/components/icons";
+import { getFactionColor } from "@/lib/factionColors";
 
 const baseURL = "https://age-of-olympia.net/infos.php?targetId=";
 
@@ -38,33 +39,6 @@ export default function CharactersPage() {
       .then((data) => setCharacters(data))
       .catch((err) => console.error("Error fetching characters:", err));
   }, []);
-
-  const getFactionColor = (faction?: string) => {
-    switch (faction?.toLowerCase()) {
-      case "le royaume des cimes":
-        return "bg-amber-200 text-amber-800";
-      case "saruta & frères":
-        return "bg-yellow-200 text-yellow-800";
-      case "eryn dolen":
-        return "bg-green-200 text-green-800";
-      case "dieux":
-        return "bg-purple-200 text-purple-800";
-      case "la forge sacrée":
-        return "bg-red-200 text-red-800";
-      case "praetorium":
-        return "bg-orange-200 text-orange-800";
-      case "le tertre sauvage":
-        return "bg-emerald-200 text-emerald-800";
-      case "redoraan":
-        return "bg-rose-200 text-rose-800";
-      case "apatrides":
-        return "bg-gray-300 text-gray-800";
-      case "bahamut":
-        return "bg-indigo-200 text-indigo-800";
-      default:
-        return "bg-gray-200 text-gray-800";
-    }
-  };
 
   const filteredCharacters = characters.filter((character: Character) => {
     const matchesName = character.name.toLowerCase().includes(filter.toLowerCase());
