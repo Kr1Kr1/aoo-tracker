@@ -1,2 +1,30 @@
 node_modules
 .next
+
+# Build / cache
+.turbo
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Prisma / SQLite (data lives outside source control)
+prisma/*.db*
+prisma/*.sqlite*
+
+# Backups
+backups/
+
+# Logs
+logs/
+*.log
+
+# Runtime-generated assets (map snapshots, scraped game assets)
+public/assets/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
