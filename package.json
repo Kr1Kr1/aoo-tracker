@@ -26,6 +26,8 @@
     "@radix-ui/react-slot": "^1.1.0",
     "@radix-ui/react-tabs": "^1.1.0",
     "@radix-ui/react-tooltip": "^1.1.2",
+    "ai": "^6.0.221",
+    "ai-sdk-provider-claude-code": "^3.5.1",
     "autoprefixer": "^10.4.19",
     "bcrypt": "^5.1.1",
     "class-variance-authority": "^0.7.0",
@@ -39,7 +41,7 @@
     "tailwindcss": "^3.4.4",
     "tailwindcss-animate": "^1.0.7",
     "winston": "^3.17.0",
-    "zod": "^3.23.8"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20",

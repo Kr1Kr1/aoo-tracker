@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { sanitizeForumHtml } from '@/lib/sanitizeForumHtml';
+import { DraftReplies } from '@/components/draft-replies';
 
 interface PageProps {
   searchParams: Promise<{ filter?: string; sort?: string }>;
@@ -171,6 +172,7 @@ export default async function MissivesPage({ searchParams }: PageProps) {
                   })}
                 </div>
               </details>
+              {!topic.closed && <DraftReplies topicId={topic.id} />}
             </CardContent>
           </Card>
         ))}
