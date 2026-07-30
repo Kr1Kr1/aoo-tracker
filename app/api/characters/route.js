@@ -1,19 +1,20 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { jsonResponse, errorResponse, preflight } from "@/lib/api";
-import { getCallerContext, visibleTargetIds, canAccessTargetId } from "@/lib/authContext";
+import { getCallerContext, canAccessTargetId } from "@/lib/authContext";
 
+// Le trombinoscope PJ/PNJ est de la data commune : tout le monde croise tout le
+// monde en jeu, et infos.php est public. On ne le restreint donc ni aux
+// personnages rattachés au compte ni au personnage joué en session
+// (acting-as) : ce filtre ne vaut que pour ce qui est personnel (events,
+// missives, mdj, équipement).
 export async function GET(request) {
   const origin = request.headers.get("origin");
   try {
     const ctx = await getCallerContext(request);
     if (!ctx) return errorResponse("Unauthorized", 401, origin);
 
-    const allowed = visibleTargetIds(ctx);
-    const where = allowed === null ? {} : { targetId: { in: allowed } };
-
     const characters = await prisma.characters.findMany({
-      where,
       include: {
         faction: true,
         attributes: true,

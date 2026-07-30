@@ -6,11 +6,9 @@ import { getCallerContext, visibleTargetIds, visibleCharacterIds } from "@/lib/a
 // Allowlist of models exposed to the client. Each entry knows how to
 // scope queries to the caller's accessible characters.
 const ALLOWED_MODELS = {
-  characters: {
-    include: { faction: true },
-    scope: (targetIds) => (targetIds === null ? {} : { targetId: { in: targetIds } }),
-    needsCharacterIds: false,
-  },
+  // Data commune : les nouvelles fiches PJ/PNJ intéressent tout le monde, on ne
+  // les filtre pas sur les personnages du compte ni sur l'acting-as.
+  characters: { include: { faction: true }, scope: () => ({}), needsCharacterIds: false },
   events: {
     include: { character: { include: { faction: true } } },
     scope: (characterIds) => (characterIds === null ? {} : { characterId: { in: characterIds } }),

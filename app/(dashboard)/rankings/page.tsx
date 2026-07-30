@@ -118,6 +118,11 @@ export default function RankingsPage() {
                   return acc + (newValue - oldValue);
                 }, 0);
 
+                // CharacterLog stores values as strings: compare them as
+                // numbers, otherwise "9" ranks above "10".
+                const lastOldXp = parseInt(lastChange?.oldValue || "0", 10);
+                const lastNewXp = parseInt(lastChange?.newValue || "0", 10);
+
                 return (
                   <TableRow key={character.id}>
                     <TableCell>{index + 1}</TableCell>
@@ -125,9 +130,9 @@ export default function RankingsPage() {
                     <TableCell>{character.attributes?.xp || 0}</TableCell>
                     <TableCell>
                       {lastChange ? (
-                        <span className={lastChange.newValue > lastChange.oldValue ? "text-green-600" : "text-red-600"}>
-                          {lastChange.newValue > lastChange.oldValue ? "+" : ""}
-                          {parseInt(lastChange.newValue || "0", 10) - parseInt(lastChange.oldValue || "0", 10)}
+                        <span className={lastNewXp > lastOldXp ? "text-green-600" : "text-red-600"}>
+                          {lastNewXp > lastOldXp ? "+" : ""}
+                          {lastNewXp - lastOldXp}
                         </span>
                       ) : "-"}
                     </TableCell>

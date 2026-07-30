@@ -1,0 +1,10 @@
+name: aoo-tracker
+category: games
+subcategory: age-of-olympia
+status: active
+kind: web
+port: 3001
+start: pnpm dev
+tech: [nextjs, typescript, prisma, sqlite, tailwind]
+description: Tracker de personnages Age of Olympia (build, équipement, historique), alimenté par l'extension Chrome aoo-extension. Port 3001 conservé, codé en dur dans le manifest de l'extension et dans la liste CORS.
+schedule: null

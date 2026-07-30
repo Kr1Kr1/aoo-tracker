@@ -129,7 +129,10 @@ export async function POST(request: Request) {
       if (file.size > MAX_BYTES) {
         return errorResponse(`File too large for layer "${layer.key}"`, 400, origin);
       }
-      const buf = Buffer.from(await file.arrayBuffer());
+      // Uint8Array rather than Buffer: @types/node 20 types Buffer over
+      // ArrayBufferLike, which no longer satisfies the ArrayBuffer-based
+      // signatures of createHash().update() and writeFile().
+      const buf = new Uint8Array(await file.arrayBuffer());
       if (buf.length > MAX_BYTES) {
         return errorResponse(`File too large for layer "${layer.key}"`, 400, origin);
       }

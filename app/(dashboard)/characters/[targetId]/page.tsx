@@ -56,6 +56,14 @@ interface Attributes {
   [key: string]: number | undefined;  // Index signature for string keys
 }
 
+// A displayed stat. `attributeGroups` below mixes two shapes (groups of
+// categories, and the flat "Attributs de Base" group), so the inner loops
+// have to say which one they are walking.
+interface Stat {
+  value: number | undefined;
+  desc: string;
+}
+
 interface MdjHistoryEntry {
   id: string;
   createdAt: string;
@@ -132,9 +140,12 @@ const CharacterDetailsPage = ({ params }: { params: Promise<PageParams> }) => {
   };
 
   const handleInputChange = (attribute: string, value: string) => {
+    // An emptied field drops out of the payload (POST ignores undefined keys)
+    // and the stored value stays put: the columns are non-nullable Ints, so
+    // sending null would just make the upsert fail.
     setEditedAttributes(prev => ({
       ...(prev || {}),
-      [attribute.toLowerCase()]: value === '' ? null : parseInt(value, 10) || 0
+      [attribute.toLowerCase()]: value === '' ? undefined : parseInt(value, 10) || 0
     }));
   };
 
@@ -307,8 +318,8 @@ const CharacterDetailsPage = ({ params }: { params: Promise<PageParams> }) => {
                               <div key={category} className="space-y-2">
                                 <h4 className="text-sm font-medium text-muted-foreground">{category}</h4>
                                 <div className="space-y-1">
-                                  {Object.entries(stats).map(([name, stat]) => (
-                                    <div 
+                                  {Object.entries(stats as Record<string, Stat>).map(([name, stat]) => (
+                                    <div
                                       key={name}
                                       className="flex justify-between items-center p-2 bg-muted/50 rounded"
                                       title={stat.desc}
@@ -362,8 +373,8 @@ const CharacterDetailsPage = ({ params }: { params: Promise<PageParams> }) => {
                           <div key={category} className="space-y-2">
                             <h4 className="text-sm font-medium text-muted-foreground">{category}</h4>
                             <div className="space-y-1">
-                              {Object.entries(stats).map(([name, stat]) => (
-                                <div 
+                              {Object.entries(stats as Record<string, Stat>).map(([name, stat]) => (
+                                <div
                                   key={name}
                                   className="flex justify-between items-center p-2 bg-muted/50 rounded hover:bg-muted"
                                   title={stat.desc}

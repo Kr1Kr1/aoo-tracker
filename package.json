@@ -15,6 +15,7 @@
     "db:backup": "mkdir -p backups && cp prisma/sauron.db backups/sauron-$(date +%Y%m%d_%H%M%S).db",
     "promote-admin": "node scripts/promoteAdmin.mjs",
     "clean-footprints": "node scripts/cleanFootprints.mjs",
+    "merge-topic-duplicates": "node scripts/mergeTopicDuplicates.mjs",
     "seed-plans": "node scripts/seedPlans.mjs"
   },
   "dependencies": {
@@ -44,6 +45,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
     "@types/node": "^20",
     "@types/react": "npm:types-react@19.0.0-rc.1",
     "@types/react-dom": "npm:types-react-dom@19.0.0-rc.1",

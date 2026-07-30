@@ -53,7 +53,8 @@ export async function GET(request) {
       // added later and is scraped). Without this, those tiles are invisible
       // because the UI can't select that z.
       const declaredZ = new Set(p.zLevels.map((zl) => zl.z));
-      const extraZ = [...(scrapedZByPlan.get(p.name) ?? [])]
+      const scrapedZSet = scrapedZByPlan.get(p.name) ?? new Set();
+      const extraZ = [...scrapedZSet]
         .filter((z) => !declaredZ.has(z))
         .sort((a, b) => a - b)
         .map((z) => ({
@@ -65,7 +66,12 @@ export async function GET(request) {
           visibleBoundsMinY: null,
           visibleBoundsMaxY: null,
         }));
-      const zLevels = [...p.zLevels, ...extraZ].sort((a, b) => a.z - b.z);
+      // hasData per z-level: lets the UI open a plan on a z that actually has
+      // scraped tiles instead of the lowest declared z (often an empty deep
+      // underground level, e.g. praetorium_s2 z=-6 "Galeries souterraines").
+      const zLevels = [...p.zLevels, ...extraZ]
+        .sort((a, b) => a.z - b.z)
+        .map((zl) => ({ ...zl, hasData: scrapedZSet.has(zl.z) }));
 
       return { ...p, zLevels, hasData: scraped.has(p.name), bg };
     });
@@ -80,6 +86,7 @@ export async function GET(request) {
           z,
           zName: null,
           bg: null,
+          hasData: true,
           visibleBoundsMinX: null,
           visibleBoundsMaxX: null,
           visibleBoundsMinY: null,

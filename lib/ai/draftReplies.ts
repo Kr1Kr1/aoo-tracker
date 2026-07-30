@@ -54,6 +54,8 @@ export async function generateDraftReplies(opts: {
   profile: string;
   topicName: string;
   transcript: TranscriptMessage[];
+  /** Recent real messages by the same character, as a style anchor. */
+  recentSamples?: string[];
   count?: number;
   instructions?: string;
 }): Promise<string[]> {
@@ -62,11 +64,28 @@ export async function generateDraftReplies(opts: {
     .map((m) => `--- ${m.author} (${m.date}) ---\n${m.text}`)
     .join("\n\n");
 
+  // The written profile describes the voice; these are the voice. Recent real
+  // messages catch the register drift a static profile misses.
+  const samples = (opts.recentSamples || []).filter((s) => s.trim().length > 40);
+  const samplesBlock = samples.length
+    ? `\n\n---\n\n# MESSAGES RÉCENTS ÉCRITS PAR ${opts.characterName.toUpperCase()} (même contexte, verbatim)
+
+Calque la longueur, le débit et le niveau de langue de ces messages avant tout le reste.
+
+${samples.map((s, i) => `## Exemple ${i + 1}\n${s}`).join("\n\n")}`
+    : "";
+
   const system = `Tu écris à la place de ${opts.characterName}, un personnage du jeu de rôle en ligne Age of Olympia.
 Tu réponds au dernier message du fil en respectant scrupuleusement la voix du personnage décrite ci-dessous : registre, tics d'écriture, formules d'ouverture et de clôture, et surtout la relation entretenue avec l'interlocuteur (tutoiement/vouvoiement, surnoms, ton).
-N'invente pas d'événements ou d'engagements majeurs qui ne découlent pas du fil.
 
-${opts.profile}`;
+Trois règles qui priment sur l'envie de bien écrire :
+1. **N'invente rien.** Ni événement, ni engagement, ni rendez-vous, ni objet, ni règle de jeu. Tout ce que tu nommes doit venir du fil, du profil ci-dessous, ou rester volontairement vague. Un objet d'équipement inventé ou une mécanique de jeu approximative est l'erreur la plus grave possible.
+2. **Ne délaye pas.** Si la réponse utile tient en cinq lignes, elle tient en cinq lignes. Ajouter un paragraphe pour faire chaleureux dénature la voix.
+3. **Pas de familiarité orale moderne** ni de vanne plaquée : reste dans le niveau de langue des messages réels du personnage.
+
+Avant de rendre un brouillon, relis-le et supprime : toute expression que tu ne trouves nulle part dans le profil ni dans les messages réels, tout objet ou chiffre que tu as inventé, tout commentaire familier sur un tiers.
+
+${opts.profile}${samplesBlock}`;
 
   const prompt = `Fil : « ${opts.topicName} »
 

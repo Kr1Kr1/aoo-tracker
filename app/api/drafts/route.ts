@@ -48,6 +48,7 @@ export async function POST(request: Request) {
     // Who replies: explicit param > acting-as > the caller's character
     // already present in the thread (their most recent one).
     let speakerName: string | null = null;
+    let speakerCharacterId: number | null = null;
     const explicitTargetId = body.characterTargetId ?? ctx.actingAsTargetId;
     if (explicitTargetId != null) {
       const targetId = parseInt(String(explicitTargetId), 10);
@@ -56,12 +57,14 @@ export async function POST(request: Request) {
       }
       const character = await prisma.characters.findUnique({
         where: { targetId },
-        select: { name: true },
+        select: { id: true, name: true },
       });
       speakerName = character?.name ?? null;
+      speakerCharacterId = character?.id ?? null;
     } else {
       const own = topic.messages.filter((m) => mine.has(m.character.id));
       speakerName = own[own.length - 1]?.character.name ?? null;
+      speakerCharacterId = own[own.length - 1]?.character.id ?? null;
     }
     if (!speakerName) {
       return errorResponse(
@@ -82,11 +85,29 @@ export async function POST(request: Request) {
       text: htmlToPlainText(m.content),
     }));
 
+    // Style anchor: what this character actually wrote lately in this kind of
+    // forum. A written profile drifts; real messages do not.
+    const recentSamples = speakerCharacterId
+      ? (
+          await prisma.messages.findMany({
+            where: {
+              characterId: speakerCharacterId,
+              topicId: { not: topic.id },
+              topic: { forumId: topic.forumId },
+            },
+            orderBy: { id: "desc" },
+            take: 6,
+            select: { content: true },
+          })
+        ).map((m) => htmlToPlainText(m.content).slice(0, 900))
+      : [];
+
     const drafts = await generateDraftReplies({
       characterName: speakerName,
       profile,
       topicName: topic.name,
       transcript,
+      recentSamples,
       count,
       instructions,
     });

@@ -32,6 +32,8 @@ interface ZLevel {
   zName: string | null;
   /** Per-z backdrop scraped from the SVG (e.g. img/tiles/sky.webp). */
   bg?: string | null;
+  /** True when this z-level has at least one scraped Coords row. */
+  hasData?: boolean;
   visibleBoundsMinX: number | null;
   visibleBoundsMaxX: number | null;
   visibleBoundsMinY: number | null;
@@ -57,6 +59,20 @@ interface PlanInfo {
 }
 
 const TILE = 50;
+
+// Default z-level to open a plan on. Blindly using zLevels[0] lands on the
+// lowest declared z — often an empty deep underground level (e.g.
+// praetorium_s2 z=-6 "Galeries souterraines") so the plan looks empty even
+// though its data is at z=0 ("Ville"). Prefer a z that actually has scraped
+// data, favouring the ground level (z=0) then the level closest to it.
+function pickDefaultZ(plan: PlanInfo | undefined): number {
+  if (!plan || plan.zLevels.length === 0) return 0;
+  const withData = plan.zLevels.filter((zl) => zl.hasData);
+  const pool = withData.length > 0 ? withData : plan.zLevels;
+  const ground = pool.find((zl) => zl.z === 0);
+  if (ground) return ground.z;
+  return [...pool].sort((a, b) => Math.abs(a.z) - Math.abs(b.z))[0].z;
+}
 
 function localAsset(href: string | null): string | null {
   if (!href) return null;
@@ -102,29 +118,42 @@ export default function MapPage() {
         const playerLoc: MeLocation | null = me?.location ?? null;
         setMeLocation(playerLoc);
 
+        // A legacy season-1 plan (`<plan>`) is hidden from the selector when
+        // its `<plan>_s2` sibling exists — resolve any stored/legacy name to
+        // that sibling so we never select a plan that has no menu entry.
+        const s2Names = new Set(
+          plansResp.plans.filter((p) => p.name.endsWith("_s2")).map((p) => p.name)
+        );
+        const currentSeason = (name?: string) =>
+          name && !name.endsWith("_s2") && s2Names.has(`${name}_s2`)
+            ? `${name}_s2`
+            : name;
+
         // (1) Restore the last view the user had open.
         let saved: { plan?: string; z?: number } | null = null;
         try {
           const raw = localStorage.getItem("map:lastView");
           if (raw) saved = JSON.parse(raw);
         } catch {}
-        const savedPlan = saved?.plan && plansResp.plans.find((p) => p.name === saved!.plan);
+        const savedName = currentSeason(saved?.plan);
+        const savedPlan = savedName && plansResp.plans.find((p) => p.name === savedName);
         if (savedPlan) {
           setSelectedPlan(savedPlan.name);
           const zOk = savedPlan.zLevels.some((zl) => zl.z === saved!.z);
-          setSelectedZ(zOk ? saved!.z! : savedPlan.zLevels[0]?.z ?? 0);
+          setSelectedZ(zOk ? saved!.z! : pickDefaultZ(savedPlan));
           return;
         }
 
         // (2) Where the active character is.
+        const playerName = currentSeason(playerLoc?.plan);
         const playerPlan =
-          playerLoc &&
-          plansResp.plans.find((p) => p.name === playerLoc.plan && p.hasData);
+          playerName &&
+          plansResp.plans.find((p) => p.name === playerName && p.hasData);
         if (playerPlan) {
           setSelectedPlan(playerPlan.name);
           setSelectedZ(
             playerPlan.zLevels.find((zl) => zl.z === playerLoc!.z)?.z ??
-              playerPlan.zLevels[0]?.z ?? 0
+              pickDefaultZ(playerPlan)
           );
           return;
         }
@@ -133,7 +162,7 @@ export default function MapPage() {
         const first = plansResp.plans.find((p) => p.hasData) || plansResp.plans[0];
         if (first) {
           setSelectedPlan(first.name);
-          setSelectedZ(first.zLevels[0]?.z ?? 0);
+          setSelectedZ(pickDefaultZ(first));
         }
       })
       .catch((err) => setError(err.message));
@@ -164,6 +193,20 @@ export default function MapPage() {
 
   const currentPlan = plans.find((p) => p.name === selectedPlan);
   const currentZLevel = currentPlan?.zLevels.find((zl) => zl.z === selectedZ);
+
+  // Season 2 is the current season; its plans carry an `_s2` suffix (except
+  // olympia and the world map, which have no per-season variant). When a
+  // `<plan>_s2` exists, the suffix-less `<plan>` is the legacy season-1 map —
+  // hide it from the selector so the two indistinguishable "Praetorium"
+  // entries don't collide. Legacy data stays in the DB, just off the menu.
+  const visiblePlans = useMemo(() => {
+    const s2Names = new Set(
+      plans.filter((p) => p.name.endsWith("_s2")).map((p) => p.name)
+    );
+    return plans.filter(
+      (p) => p.name.endsWith("_s2") || !s2Names.has(`${p.name}_s2`)
+    );
+  }, [plans]);
 
   // Not every plan has a real ground bg image: seedPlans falls back to a
   // guessed `img/tiles/<plan>.png` that often doesn't exist (e.g. olympia,
@@ -394,12 +437,12 @@ export default function MapPage() {
           onChange={(e) => {
             const p = plans.find((pl) => pl.name === e.target.value);
             setSelectedPlan(e.target.value);
-            setSelectedZ(p?.zLevels[0]?.z ?? 0);
+            setSelectedZ(pickDefaultZ(p));
           }}
           className="border rounded px-2 py-1 text-sm"
         >
           <optgroup label="Avec données">
-            {plans
+            {visiblePlans
               .filter((p) => p.hasData)
               .map((p) => (
                 <option key={p.name} value={p.name}>
@@ -408,7 +451,7 @@ export default function MapPage() {
               ))}
           </optgroup>
           <optgroup label="Sans données (non explorés)">
-            {plans
+            {visiblePlans
               .filter((p) => !p.hasData)
               .map((p) => (
                 <option key={p.name} value={p.name}>
@@ -551,7 +594,7 @@ export default function MapPage() {
                   const target = plans.find((p) => p.name === e.planTo);
                   if (target) {
                     setSelectedPlan(target.name);
-                    setSelectedZ(target.zLevels[0]?.z ?? 0);
+                    setSelectedZ(pickDefaultZ(target));
                   }
                 }}
                 className="underline hover:text-foreground"
