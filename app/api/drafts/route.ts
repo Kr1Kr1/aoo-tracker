@@ -7,6 +7,7 @@ import {
   htmlToPlainText,
   generateDraftReplies,
 } from "@/lib/ai/draftReplies";
+import { loadVoiceSamples } from "@/lib/ai/voiceSamples";
 
 // Generation shells out to the local Claude CLI; give it room.
 export const maxDuration = 300;
@@ -88,18 +89,11 @@ export async function POST(request: Request) {
     // Style anchor: what this character actually wrote lately in this kind of
     // forum. A written profile drifts; real messages do not.
     const recentSamples = speakerCharacterId
-      ? (
-          await prisma.messages.findMany({
-            where: {
-              characterId: speakerCharacterId,
-              topicId: { not: topic.id },
-              topic: { forumId: topic.forumId },
-            },
-            orderBy: { id: "desc" },
-            take: 6,
-            select: { content: true },
-          })
-        ).map((m) => htmlToPlainText(m.content).slice(0, 900))
+      ? await loadVoiceSamples({
+          characterId: speakerCharacterId,
+          forumId: topic.forumId,
+          excludeTopicId: topic.id,
+        })
       : [];
 
     const drafts = await generateDraftReplies({

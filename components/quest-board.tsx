@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { QuestMissive } from '@/components/quest-missive';
 import {
   CHANNEL_LABEL,
   OPEN_STATUSES,
@@ -58,6 +59,8 @@ type DetectState =
   | { status: 'error'; message: string }
   | { status: 'done'; candidates: Candidate[]; threadsRead: number };
 
+type ComposeState = { status: 'idle' | 'loading' } | { status: 'error'; message: string };
+
 const emptyDraft: QuestDraft = {
   title: '',
   summary: '',
@@ -100,6 +103,12 @@ export function QuestBoard({
   const [detect, setDetect] = useState<DetectState>({ status: 'idle' });
   const [instructions, setInstructions] = useState('');
   const [creating, setCreating] = useState(false);
+  const [dictation, setDictation] = useState('');
+  const [compose, setCompose] = useState<ComposeState>({ status: 'idle' });
+  // Le formulaire garde son brouillon dans un état local : pour qu'une dictée
+  // vienne le remplir, il faut le remonter.
+  const [formDraft, setFormDraft] = useState<QuestDraft>(emptyDraft);
+  const [formKey, setFormKey] = useState(0);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -190,6 +199,59 @@ export function QuestBoard({
     }
   }
 
+  /** Dictée en clair : le modèle range, l'auteur relit et corrige avant d'enregistrer. */
+  async function composeFromDictation() {
+    const text = dictation.trim();
+    if (text.length < 10) {
+      setCompose({ status: 'error', message: 'Décrivez la quête en quelques mots au moins' });
+      return;
+    }
+    setCompose({ status: 'loading' });
+    try {
+      const res = await fetch('/api/quests/compose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ characterTargetId: character.targetId, text }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCompose({ status: 'error', message: data.error || `Erreur ${res.status}` });
+        return;
+      }
+      setFormDraft({
+        title: data.draft.title ?? '',
+        summary: data.draft.summary ?? '',
+        stake: data.draft.stake ?? '',
+        nextStep: data.draft.nextStep ?? '',
+        status: data.draft.status ?? 'lead',
+        topicIds: data.draft.topicIds ?? [],
+        actors: (data.draft.actors ?? []).map((a: CharacterOption) => ({
+          targetId: a.targetId,
+          name: a.name,
+          role: '',
+        })),
+      });
+      setFormKey((key) => key + 1);
+      setCompose({ status: 'idle' });
+      setNotice(
+        Array.isArray(data.unknownActors) && data.unknownActors.length > 0
+          ? `Non rattachés, aucune fiche à ce nom en base : ${data.unknownActors.join(', ')}`
+          : null
+      );
+    } catch {
+      setCompose({ status: 'error', message: 'Erreur réseau' });
+    }
+  }
+
+  function openCreation() {
+    setFormDraft(emptyDraft);
+    setFormKey((key) => key + 1);
+    setDictation('');
+    setCompose({ status: 'idle' });
+    setCreating(true);
+    setEditingId(null);
+  }
+
   function dropCandidate(index: number) {
     setDetect((state) =>
       state.status === 'done'
@@ -242,10 +304,7 @@ export function QuestBoard({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              setCreating((open) => !open);
-              setEditingId(null);
-            }}
+            onClick={() => (creating ? setCreating(false) : openCreation())}
           >
             {creating ? 'Annuler' : '+ Nouvelle quête'}
           </Button>
@@ -271,9 +330,36 @@ export function QuestBoard({
       {creating && (
         <Card>
           <CardHeader className="pb-2 text-sm font-semibold">Nouvelle quête</CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            <div className="rounded border border-dashed bg-muted/30 p-3">
+              <label className={labelClass}>Dictez-la en clair, les champs se remplissent ensuite</label>
+              <textarea
+                className={`${fieldClass} mt-1 min-h-24`}
+                value={dictation}
+                onChange={(e) => setDictation(e.target.value)}
+                placeholder="Ex. : « Ça fait des mois que je cherche Zeus. Memestra a laissé tomber, il me reste la piste de Leyrion sur le disque solaire. Je dois lui réécrire. »"
+              />
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={composeFromDictation}
+                  disabled={compose.status === 'loading'}
+                >
+                  {compose.status === 'loading' ? '✍️ Mise en fiche…' : '✍️ Remplir les champs'}
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Rien n&apos;est enregistré : les champs ci-dessous restent modifiables.
+                </span>
+              </div>
+              {compose.status === 'error' && (
+                <p className="mt-2 text-sm text-red-600">{compose.message}</p>
+              )}
+            </div>
+
             <QuestForm
-              initial={emptyDraft}
+              key={formKey}
+              initial={formDraft}
               topicOptions={topicOptions}
               characterOptions={characterOptions}
               busy={busy}
@@ -545,6 +631,12 @@ function QuestCard({
             ))}
           </div>
         )}
+
+        <QuestMissive
+          questId={quest.id}
+          actors={quest.actors.map((actor) => actor.name)}
+          nextStep={quest.nextStep}
+        />
       </CardContent>
     </Card>
   );
