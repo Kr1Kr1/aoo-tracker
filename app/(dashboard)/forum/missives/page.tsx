@@ -1,7 +1,7 @@
 import prisma from '@/lib/prisma';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { getCallerContextFromCookies } from '@/lib/authContext';
+import { getCallerContextFromCookies, visibleMissiveTopicIds } from '@/lib/authContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -60,7 +60,6 @@ export default async function MissivesPage({ searchParams }: PageProps) {
   const sort = params.sort === 'oldest' ? 'oldest' : 'newest';
 
   const charIdSet = new Set(ctx.characterIds);
-  const isAdmin = ctx.role === 'admin';
 
   const allTopics = await prisma.topics.findMany({
     where: { forum: { type: 'Missives' } },
@@ -73,10 +72,14 @@ export default async function MissivesPage({ searchParams }: PageProps) {
     },
   });
 
-  // Visibility: admin sees all; user only those they participated in
-  const visibleTopics = isAdmin
-    ? allTopics
-    : allTopics.filter((t) => t.messages.some((m) => charIdSet.has(m.character.id)));
+  // Visibilité : la règle vit dans lib/authContext, pour que la page, l'API et
+  // les quêtes disent la même chose. Une missive reçue et jamais répondue n'a
+  // aucun message de soi : elle reste pourtant la sienne.
+  const visibleIds = await visibleMissiveTopicIds(ctx);
+  const visibleTopics =
+    visibleIds === null
+      ? allTopics
+      : ((ids) => allTopics.filter((t) => ids.has(t.id)))(new Set(visibleIds));
 
   const enriched = visibleTopics.map((t) => {
     // `Topics.updatedAt` is bumped by every sync, so it tracks scrape time, not

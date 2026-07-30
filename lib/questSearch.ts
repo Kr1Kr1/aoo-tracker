@@ -12,6 +12,7 @@
 // vient d'un fil déjà rattaché ou d'un personnage déjà cité.
 
 import prisma from '@/lib/prisma';
+import { visibleMissiveTopicIds, type CallerContext } from '@/lib/authContext';
 import { htmlToPlainText } from '@/lib/ai/draftReplies';
 import { messageTime, sortMessagesChronologically } from '@/lib/messageDate';
 import { foldName } from '@/lib/questMotifs';
@@ -120,31 +121,23 @@ export function buildQuestQuery(parts: {
 
 /**
  * Fils lisibles par l'appelant : on reprend la règle des pages forum. Les fils
- * RP, publics et privés sont ouverts à tout compte connecté ; une missive n'est
- * lisible que par ses participants. Un scan ne doit pas devenir une fenêtre sur
- * la correspondance des autres.
+ * RP, publics et privés sont ouverts à tout compte connecté ; pour les missives,
+ * c'est lib/authContext qui tranche (une reçue sans réponse reste la sienne).
+ * Un scan ne doit pas devenir une fenêtre sur la correspondance des autres.
  */
-async function readableTopicScope(opts: { isAdmin: boolean; characterIds: number[] }) {
+async function readableTopicScope(ctx: CallerContext) {
   const topics = await prisma.topics.findMany({
     select: { id: true, name: true, forumId: true, forum: { select: { type: true } } },
   });
-  if (opts.isAdmin) return topics;
 
   const missives = topics.filter((t) => t.forum.type === 'Missives').map((t) => t.id);
-  if (missives.length === 0 || opts.characterIds.length === 0) {
-    return topics.filter((t) => t.forum.type !== 'Missives');
-  }
+  if (missives.length === 0) return topics;
 
-  const mine = new Set(
-    (
-      await prisma.messages.findMany({
-        where: { topicId: { in: missives }, characterId: { in: opts.characterIds } },
-        select: { topicId: true },
-        distinct: ['topicId'],
-      })
-    ).map((m) => m.topicId)
-  );
-  return topics.filter((t) => t.forum.type !== 'Missives' || mine.has(t.id));
+  const visible = await visibleMissiveTopicIds(ctx, missives);
+  if (visible === null) return topics;
+
+  const allowed = new Set(visible);
+  return topics.filter((t) => t.forum.type !== 'Missives' || allowed.has(t.id));
 }
 
 /**
@@ -158,17 +151,13 @@ export async function gatherQuestEvidence(opts: {
   actorNames: string[];
   /** Le personnage dont c'est le carnet : ses propres messages comptent un peu plus. */
   characterId: number;
-  isAdmin: boolean;
-  callerCharacterIds: number[];
+  ctx: CallerContext;
 }): Promise<QuestQuery> {
   const terms = [...opts.query.keys()];
   const linked = new Set(opts.linkedTopicIds);
   const actorSet = new Set(opts.actorNames.map(foldName));
 
-  const scope = (await readableTopicScope({
-    isAdmin: opts.isAdmin,
-    characterIds: opts.callerCharacterIds,
-  })).filter((t) => t.forum.type !== 'HRP');
+  const scope = (await readableTopicScope(opts.ctx)).filter((t) => t.forum.type !== 'HRP');
 
   const topicById = new Map(scope.map((t) => [t.id, t]));
   if (topicById.size === 0 || terms.length === 0) {

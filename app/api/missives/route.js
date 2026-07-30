@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { jsonResponse, errorResponse, preflight } from "@/lib/api";
-import { getCallerContext, visibleCharacterIds } from "@/lib/authContext";
+import { getCallerContext, visibleMissiveTopicIds } from "@/lib/authContext";
 import { messageTime, sortMessagesChronologically } from "@/lib/messageDate";
 
 // Returns all missive topics (Forums.type === "Missives") visible to the caller,
@@ -12,7 +12,9 @@ export async function GET(request) {
     const ctx = await getCallerContext(request);
     if (!ctx) return errorResponse("Unauthorized", 401, origin);
 
-    const allowedCharIds = await visibleCharacterIds(ctx);
+    // Une missive reçue et jamais répondue n'a aucun message de soi : la règle
+    // de visibilité vit dans lib/authContext, pour rester la même partout.
+    const visibleIds = await visibleMissiveTopicIds(ctx);
 
     // Message headers only (no content): enough to order topics the way the
     // game does, i.e. by the date of their last message. `Topics.updatedAt` is
@@ -72,12 +74,8 @@ export async function GET(request) {
       (a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime()
     );
 
-    // Optionally narrow by acting-as via visibleCharacterIds: a missive is
-    // "mine" if any of its messages' authors is in my character set.
-    const filtered =
-      allowedCharIds === null
-        ? enriched
-        : await filterByParticipation(enriched, new Set(allowedCharIds));
+    const visibleSet = visibleIds === null ? null : new Set(visibleIds);
+    const filtered = visibleSet === null ? enriched : enriched.filter((t) => visibleSet.has(t.id));
 
     logger.info(`Missives: returned ${filtered.length} topics for ${ctx.username}`);
     return jsonResponse({ topics: filtered }, { origin });
@@ -85,20 +83,6 @@ export async function GET(request) {
     logger.error(`Error fetching missives: ${err.message}`, { stack: err.stack });
     return errorResponse("Internal Server Error", 500, origin);
   }
-}
-
-// A topic is visible to a user if any participant (message author) is one
-// of the user's linked characters.
-async function filterByParticipation(topics, allowedCharIdSet) {
-  if (topics.length === 0) return topics;
-  const topicIds = topics.map((t) => t.id);
-  const participations = await prisma.messages.findMany({
-    where: { topicId: { in: topicIds }, characterId: { in: [...allowedCharIdSet] } },
-    select: { topicId: true },
-    distinct: ["topicId"],
-  });
-  const visibleIds = new Set(participations.map((p) => p.topicId));
-  return topics.filter((t) => visibleIds.has(t.id));
 }
 
 export async function OPTIONS(request) {

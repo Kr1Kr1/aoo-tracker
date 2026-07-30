@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { jsonResponse, errorResponse, preflight } from "@/lib/api";
+import { toAbsoluteDateString } from "@/lib/messageDate";
 
 // `link` is the upsert key for a topic, so it has to identify the topic and
 // nothing else. The forum serves topic hrefs with a "#lastMessageId" fragment
@@ -16,6 +17,25 @@ function normalizeTopicLink(link) {
   } catch {
     return String(link).split("#")[0].replace(/[?&]page=\d+/g, "");
   }
+}
+
+// Un auteur inconnu de la base ne doit pas coûter un fil. Le scrape des fiches
+// (infos.php) ne passe pas par tout le monde : PNJ, comptes fermés, personnages
+// jamais croisés. Or on jetait le sujet entier quand son auteur manquait, si
+// bien qu'une missive d'Orcrist était sautée à chaque synchro, indéfiniment.
+// On crée donc la fiche minimale : le forum nous donne son targetId et son nom,
+// le reste se remplira au premier passage sur sa fiche.
+async function resolveAuthor(author) {
+  if (!author?.targetId) return null;
+  const known = await prisma.characters.findUnique({ where: { targetId: author.targetId } });
+  if (known) return known;
+  if (!author.name) return null;
+
+  const created = await prisma.characters.create({
+    data: { targetId: author.targetId, name: author.name },
+  });
+  logger.info(`Character created from forum data: ${author.name} (${author.targetId})`);
+  return created;
 }
 
 export async function POST(request) {
@@ -55,11 +75,9 @@ export async function POST(request) {
         continue;
       }
 
-      const topicAuthor = await prisma.characters.findUnique({
-        where: { targetId: firstMessage.author.targetId },
-      });
+      const topicAuthor = await resolveAuthor(firstMessage.author);
       if (!topicAuthor) {
-        logger.warn(`Topic author not found: ${firstMessage.author.name}`);
+        logger.warn(`Topic author unusable (no name): ${topic.name}`);
         skippedCount++;
         continue;
       }
@@ -82,27 +100,39 @@ export async function POST(request) {
 
         // Resolve the actual message author (NOT the topic author —
         // a topic can have replies from many different characters).
-        const messageAuthor = await prisma.characters.findUnique({
-          where: { targetId: message.author.targetId },
-        });
+        const messageAuthor = await resolveAuthor(message.author);
         if (!messageAuthor) {
-          logger.warn(`Message author not found: ${message.author.name}`);
+          logger.warn(`Message author unusable (no name) in ${topic.name}`);
           continue;
         }
+
+        // Le forum affiche « Aujourd'hui18:51 », puis « Hier18:51 », puis la
+        // date pleine : trois libellés pour un même message. On le résout ici,
+        // sinon l'identité d'un message change d'un jour à l'autre (doublons)
+        // et un message neuf peut retomber sur le libellé d'un ancien, auquel
+        // cas il était jeté comme déjà connu.
+        const date = toAbsoluteDateString(message.date, new Date());
 
         const exists = await prisma.messages.findFirst({
           where: {
             topicId: savedTopic.id,
-            date: message.date,
             characterId: messageAuthor.id,
+            OR: [{ date }, { content: message.content }],
           },
+          select: { id: true, date: true },
         });
-        if (exists) continue;
+        if (exists) {
+          // Ancien enregistrement au libellé relatif : on le fige maintenant.
+          if (exists.date !== date && !/^\d{1,2}\/\d{1,2}\/\d{4}/.test(exists.date)) {
+            await prisma.messages.update({ where: { id: exists.id }, data: { date } });
+          }
+          continue;
+        }
 
         await prisma.messages.create({
           data: {
             content: message.content,
-            date: message.date,
+            date,
             topicId: savedTopic.id,
             characterId: messageAuthor.id,
           },

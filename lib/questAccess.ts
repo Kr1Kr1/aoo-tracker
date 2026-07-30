@@ -1,5 +1,5 @@
 import prisma from '@/lib/prisma';
-import { canAccessTargetId, type CallerContext } from '@/lib/authContext';
+import { canAccessTargetId, visibleMissiveTopicIds, type CallerContext } from '@/lib/authContext';
 import { resolveCharactersByName } from '@/lib/quests';
 
 // Qui ouvre quel carnet. Un carnet appartient à un personnage : l'appelant doit
@@ -49,9 +49,9 @@ export async function resolveQuestCharacter(
 /**
  * Fils que l'appelant peut rattacher à une quête. On reprend la règle de
  * visibilité déjà appliquée par les pages forum : les fils RP et privés sont
- * lisibles par tout compte connecté, les missives seulement par leurs
- * participants (ou un admin). Une piste peut donc citer un fil où le
- * personnage n'a jamais écrit, ce qui est précisément l'intérêt.
+ * lisibles par tout compte connecté, les missives selon la règle de
+ * lib/authContext (ou tout, pour un admin). Une piste peut donc citer un fil où
+ * le personnage n'a jamais écrit, ce qui est précisément l'intérêt.
  */
 export async function readableTopicIds(ctx: CallerContext, topicIds: number[]): Promise<number[]> {
   const unique = [...new Set(topicIds)].filter((id) => Number.isInteger(id));
@@ -65,14 +65,12 @@ export async function readableTopicIds(ctx: CallerContext, topicIds: number[]): 
 
   const open = existing.filter((t) => t.forum.type !== 'Missives').map((t) => t.id);
   const missives = existing.filter((t) => t.forum.type === 'Missives').map((t) => t.id);
-  if (missives.length === 0 || ctx.characterIds.length === 0) return open;
+  if (missives.length === 0) return open;
 
-  const mine = await prisma.messages.findMany({
-    where: { topicId: { in: missives }, characterId: { in: ctx.characterIds } },
-    select: { topicId: true },
-    distinct: ['topicId'],
-  });
-  return [...open, ...mine.map((m) => m.topicId)];
+  // Même règle que la boîte à missives : une missive reçue et jamais répondue
+  // n'a aucun message de soi, elle reste pourtant la sienne.
+  const visible = await visibleMissiveTopicIds(ctx, missives);
+  return visible === null ? [...open, ...missives] : [...open, ...visible];
 }
 
 /**

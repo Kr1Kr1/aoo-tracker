@@ -115,6 +115,60 @@ export async function visibleCharacterIds(ctx: CallerContext): Promise<number[] 
   return ctx.characterIds;
 }
 
+/**
+ * Fils de missives lisibles par l'appelant, `null` quand rien ne filtre (admin
+ * hors acting-as).
+ *
+ * Une missive n'a pas de destinataire en base : le scrape ne remonte que ses
+ * messages. En déduire la visibilité de la seule participation revenait à cacher
+ * exactement les missives qui comptent le plus, celles reçues et jamais
+ * répondues (aucun message de soi, donc invisible alors qu'elle attend une
+ * réponse). D'où la règle : sont lisibles les missives où le personnage a écrit,
+ * plus celles où aucun personnage du compte n'a écrit.
+ *
+ * Ce second cas repose sur une hypothèse : ce qui est en base vient de la boîte
+ * du compte qui a alimenté le tracker. Elle tient tant qu'un seul compte
+ * alimente la base ; le jour où plusieurs le font, il faudra que l'ingestion
+ * enregistre à qui la missive appartient (cf. app/api/forums).
+ */
+export async function visibleMissiveTopicIds(
+  ctx: CallerContext,
+  candidateTopicIds?: number[]
+): Promise<number[] | null> {
+  const scope = await visibleCharacterIds(ctx);
+  if (scope === null) return null;
+
+  const topics = await prisma.topics.findMany({
+    where: {
+      forum: { type: "Missives" },
+      ...(candidateTopicIds ? { id: { in: candidateTopicIds } } : {}),
+    },
+    select: { id: true },
+  });
+  const topicIds = topics.map((t) => t.id);
+  if (topicIds.length === 0) return [];
+
+  const [mine, account] = await Promise.all([
+    prisma.messages.findMany({
+      where: { topicId: { in: topicIds }, characterId: { in: scope } },
+      select: { topicId: true },
+      distinct: ["topicId"],
+    }),
+    prisma.messages.findMany({
+      where: { topicId: { in: topicIds }, characterId: { in: ctx.characterIds } },
+      select: { topicId: true },
+      distinct: ["topicId"],
+    }),
+  ]);
+
+  const written = new Set(mine.map((m) => m.topicId));
+  // Écrite par un autre personnage du compte : c'est sa correspondance à lui,
+  // pas celle du personnage joué.
+  const claimedByAnother = new Set(account.map((m) => m.topicId));
+
+  return topicIds.filter((id) => written.has(id) || !claimedByAnother.has(id));
+}
+
 export function canAccessTargetId(ctx: CallerContext, targetId: number): boolean {
   if (ctx.role === "admin") return true;
   return ctx.characterTargetIds.includes(targetId);

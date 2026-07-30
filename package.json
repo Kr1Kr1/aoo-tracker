@@ -16,6 +16,7 @@
     "promote-admin": "node scripts/promoteAdmin.mjs",
     "clean-footprints": "node scripts/cleanFootprints.mjs",
     "merge-topic-duplicates": "node scripts/mergeTopicDuplicates.mjs",
+    "normalize-message-dates": "node scripts/normalizeMessageDates.mjs",
     "seed-plans": "node scripts/seedPlans.mjs"
   },
   "dependencies": {

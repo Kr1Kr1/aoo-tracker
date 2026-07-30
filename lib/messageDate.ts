@@ -56,6 +56,25 @@ export function sortMessagesChronologically<T extends DatedMessage & { id: numbe
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
+/**
+ * Date affichée ramenée à une date absolue, « JJ/MM/AAAA HH:MM ».
+ *
+ * Un message affiché « Aujourd'hui18:51 » devient « Hier18:51 » le lendemain,
+ * puis « 30/07/2026 18:51 » ensuite : trois libellés pour le même message. Tant
+ * que l'ingestion se servait du libellé comme identité, elle enregistrait le
+ * même message plusieurs fois, et pire, elle jetait un message neuf dont le
+ * libellé retombait sur celui d'un ancien. Résolue à l'ingestion, la date ne
+ * bouge plus.
+ */
+export function toAbsoluteDateString(
+  date?: string | null,
+  anchor?: Date | string | null
+): string {
+  const d = parseMessageDate(date, anchor);
+  if (Number.isNaN(d.getTime())) return (date || '').trim();
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // Deterministic formatting (no locale lookup) so server and client agree.
 export function formatMessageDate(message: DatedMessage): string {
   if (!message.date) return '—';

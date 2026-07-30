@@ -61,8 +61,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       linkedTopicIds: quest.topics.map((t) => t.topic.id),
       actorNames,
       characterId: quest.character.id,
-      isAdmin: ctx.role === 'admin',
-      callerCharacterIds: ctx.characterIds,
+      ctx,
     });
 
     if (evidence.threads.length === 0) {
