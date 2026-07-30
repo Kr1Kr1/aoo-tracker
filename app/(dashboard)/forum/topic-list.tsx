@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { sanitizeForumHtml } from "@/lib/sanitizeForumHtml";
+import { formatMessageDate, messageTime, sortMessagesChronologically } from "@/lib/messageDate";
 
 type Message = {
   id: number;
@@ -23,16 +24,18 @@ type Topic = {
 
 type SortKey = "newest" | "oldest";
 
+// Ordered by the date the message carries in game, not by `createdAt`
+// (ingestion time) nor `updatedAt` (bumped by every sync).
 function lastActivity(t: Topic): number {
-  const last = t.messages[t.messages.length - 1]?.createdAt ?? t.updatedAt;
-  return new Date(last).getTime();
+  const last = t.messages[t.messages.length - 1];
+  return last ? messageTime(last) : new Date(t.updatedAt).getTime();
 }
 
 export function TopicList({ topics }: { topics: Topic[] }) {
   const [sort, setSort] = useState<SortKey>("newest");
 
   const sorted = useMemo(() => {
-    const copy = [...topics];
+    const copy = topics.map((t) => ({ ...t, messages: sortMessagesChronologically(t.messages) }));
     copy.sort((a, b) => {
       const diff = lastActivity(b) - lastActivity(a);
       return sort === "newest" ? diff : -diff;
@@ -65,7 +68,7 @@ export function TopicList({ topics }: { topics: Topic[] }) {
                     {last && (
                       <>
                         {" "}
-                        · Dernier : {last.character.name} · {last.date || "—"}
+                        · Dernier : {last.character.name} · {formatMessageDate(last)}
                       </>
                     )}
                   </p>
@@ -81,7 +84,7 @@ export function TopicList({ topics }: { topics: Topic[] }) {
                       <div key={m.id} className="p-3 rounded bg-gray-50 text-sm">
                         <div className="text-xs font-medium mb-1 flex justify-between">
                           <span>{m.character.name}</span>
-                          <span className="text-muted-foreground">{m.date}</span>
+                          <span className="text-muted-foreground">{formatMessageDate(m)}</span>
                         </div>
                         <div
                           className="prose prose-sm max-w-none"

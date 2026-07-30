@@ -2,6 +2,22 @@ import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { jsonResponse, errorResponse, preflight } from "@/lib/api";
 
+// `link` is the upsert key for a topic, so it has to identify the topic and
+// nothing else. The forum serves topic hrefs with a "#lastMessageId" fragment
+// that changes on every reply: keeping it made each sync insert a new row and
+// scatter the messages across the copies. Older extension builds still send
+// those, so normalize here too rather than trusting the client.
+function normalizeTopicLink(link) {
+  try {
+    const url = new URL(link);
+    url.hash = "";
+    url.searchParams.delete("page");
+    return url.toString();
+  } catch {
+    return String(link).split("#")[0].replace(/[?&]page=\d+/g, "");
+  }
+}
+
 export async function POST(request) {
   const origin = request.headers.get("origin");
   try {
@@ -48,11 +64,12 @@ export async function POST(request) {
         continue;
       }
 
+      const topicLink = normalizeTopicLink(topic.link);
       const savedTopic = await prisma.topics.upsert({
-        where: { link: topic.link },
+        where: { link: topicLink },
         create: {
           name: topic.name,
-          link: topic.link,
+          link: topicLink,
           forumId: savedForum.id,
           authorId: topicAuthor.id,
         },

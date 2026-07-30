@@ -6,11 +6,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { sanitizeForumHtml } from '@/lib/sanitizeForumHtml';
-import { DraftReplies } from '@/components/draft-replies';
+import { MissiveThread } from '@/components/missive-thread';
+import { formatMessageDate, messageTime, sortMessagesChronologically } from '@/lib/messageDate';
 
 interface PageProps {
-  searchParams: Promise<{ filter?: string; sort?: string }>;
+  searchParams: Promise<{ filter?: string; sort?: string; page?: string }>;
 }
+
+// Threads are rendered in full, so the list itself is paginated: an admin sees
+// every missive of the game and the whole set at once weighs several MB.
+const TOPICS_PER_PAGE = 20;
 
 const STATUS_LABEL: Record<string, string> = {
   needs_reply: '🔴 À répondre',
@@ -66,7 +71,6 @@ export default async function MissivesPage({ searchParams }: PageProps) {
         include: { character: { select: { id: true, targetId: true, name: true } } },
       },
     },
-    orderBy: { updatedAt: sort === 'newest' ? 'desc' : 'asc' },
   });
 
   // Visibility: admin sees all; user only those they participated in
@@ -75,13 +79,33 @@ export default async function MissivesPage({ searchParams }: PageProps) {
     : allTopics.filter((t) => t.messages.some((m) => charIdSet.has(m.character.id)));
 
   const enriched = visibleTopics.map((t) => {
-    const last = t.messages[t.messages.length - 1];
+    // `Topics.updatedAt` is bumped by every sync, so it tracks scrape time, not
+    // thread activity. The game orders missives by their last message: do the same.
+    const messages = sortMessagesChronologically(t.messages);
+    const last = messages[messages.length - 1];
     const lastIsMine = last ? charIdSet.has(last.character.id) : false;
     const status = t.closed ? 'closed' : lastIsMine ? 'waiting' : 'needs_reply';
-    return { ...t, status, lastIsMine, last };
+    return {
+      ...t,
+      messages,
+      status,
+      lastIsMine,
+      last,
+      lastActivity: last ? messageTime(last) : new Date(t.updatedAt).getTime(),
+    };
   });
 
-  const filtered = enriched.filter((t) => filter === 'all' || t.status === filter);
+  enriched.sort((a, b) =>
+    sort === 'newest' ? b.lastActivity - a.lastActivity : a.lastActivity - b.lastActivity
+  );
+
+  const matching = enriched.filter((t) => filter === 'all' || t.status === filter);
+
+  const pageCount = Math.max(1, Math.ceil(matching.length / TOPICS_PER_PAGE));
+  const page = Math.min(Math.max(parseInt(params.page || '1', 10) || 1, 1), pageCount);
+  const filtered = matching.slice((page - 1) * TOPICS_PER_PAGE, page * TOPICS_PER_PAGE);
+  const href = (next: { filter?: string; sort?: string; page?: number }) =>
+    `?filter=${next.filter ?? filter}&sort=${next.sort ?? sort}&page=${next.page ?? 1}`;
 
   const counts = {
     all: enriched.length,
@@ -97,14 +121,14 @@ export default async function MissivesPage({ searchParams }: PageProps) {
       <div className="flex flex-wrap items-center gap-3">
         <Tabs value={filter} className="w-fit">
           <TabsList>
-            <a href={`?filter=all&sort=${sort}`}><TabsTrigger value="all">Toutes ({counts.all})</TabsTrigger></a>
-            <a href={`?filter=needs_reply&sort=${sort}`}><TabsTrigger value="needs_reply">🔴 À répondre ({counts.needs_reply})</TabsTrigger></a>
-            <a href={`?filter=waiting&sort=${sort}`}><TabsTrigger value="waiting">🟡 En attente ({counts.waiting})</TabsTrigger></a>
-            <a href={`?filter=closed&sort=${sort}`}><TabsTrigger value="closed">🔘 Clôturées ({counts.closed})</TabsTrigger></a>
+            <a href={href({ filter: 'all' })}><TabsTrigger value="all">Toutes ({counts.all})</TabsTrigger></a>
+            <a href={href({ filter: 'needs_reply' })}><TabsTrigger value="needs_reply">🔴 À répondre ({counts.needs_reply})</TabsTrigger></a>
+            <a href={href({ filter: 'waiting' })}><TabsTrigger value="waiting">🟡 En attente ({counts.waiting})</TabsTrigger></a>
+            <a href={href({ filter: 'closed' })}><TabsTrigger value="closed">🔘 Clôturées ({counts.closed})</TabsTrigger></a>
           </TabsList>
         </Tabs>
         <a
-          href={`?filter=${filter}&sort=${sort === 'newest' ? 'oldest' : 'newest'}`}
+          href={href({ sort: sort === 'newest' ? 'oldest' : 'newest' })}
           className="ml-auto"
         >
           <Button variant="outline" size="sm">
@@ -113,8 +137,16 @@ export default async function MissivesPage({ searchParams }: PageProps) {
         </a>
       </div>
 
-      {filtered.length === 0 && (
+      {matching.length === 0 && (
         <p className="text-muted-foreground">Aucune missive {filter !== 'all' && `dans cette catégorie`}.</p>
+      )}
+
+      {pageCount > 1 && (
+        <p className="text-xs text-muted-foreground">
+          Missives {(page - 1) * TOPICS_PER_PAGE + 1}–
+          {Math.min(page * TOPICS_PER_PAGE, matching.length)} sur {matching.length} · page {page}/
+          {pageCount}
+        </p>
       )}
 
       <div className="space-y-3">
@@ -133,7 +165,7 @@ export default async function MissivesPage({ searchParams }: PageProps) {
                 <p className="text-xs text-muted-foreground mt-1">
                   {topic.messages.length} message{topic.messages.length > 1 ? 's' : ''} ·
                   Dernier : {topic.last?.character.name || '?'} ·{' '}
-                  {topic.last?.date || '—'}
+                  {topic.last ? formatMessageDate(topic.last) : '—'}
                 </p>
               </div>
               <form action={toggleClosed}>
@@ -145,38 +177,44 @@ export default async function MissivesPage({ searchParams }: PageProps) {
               </form>
             </CardHeader>
             <CardContent>
-              <details>
-                <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
-                  Voir les {topic.messages.length} message{topic.messages.length > 1 ? 's' : ''}
-                </summary>
-                <div className="mt-3 space-y-3 max-h-[600px] overflow-y-auto pr-2">
-                  {topic.messages.map((m) => {
-                    const isMine = charIdSet.has(m.character.id);
-                    return (
-                      <div
-                        key={m.id}
-                        className={`p-3 rounded text-sm ${
-                          isMine ? 'bg-blue-50 ml-8' : 'bg-gray-50 mr-8'
-                        }`}
-                      >
-                        <div className="text-xs font-medium mb-1 flex justify-between">
-                          <span>{m.character.name}</span>
-                          <span className="text-muted-foreground">{m.date}</span>
-                        </div>
-                        <div
-                          className="prose prose-sm max-w-none"
-                          dangerouslySetInnerHTML={{ __html: sanitizeForumHtml(m.content) }}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              </details>
-              {!topic.closed && <DraftReplies topicId={topic.id} />}
+              {/* Thread oldest first, folded by default, paginated like in game. */}
+              <MissiveThread
+                topicId={topic.id}
+                closed={topic.closed}
+                posts={topic.messages.map((m) => ({
+                  id: m.id,
+                  author: m.character.name,
+                  date: formatMessageDate(m),
+                  html: sanitizeForumHtml(m.content),
+                  isMine: charIdSet.has(m.character.id),
+                }))}
+              />
             </CardContent>
           </Card>
         ))}
       </div>
+
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between gap-3">
+          {page > 1 ? (
+            <a href={href({ page: page - 1 })}>
+              <Button variant="outline" size="sm">← Précédentes</Button>
+            </a>
+          ) : (
+            <span />
+          )}
+          <span className="text-xs text-muted-foreground">
+            page {page}/{pageCount}
+          </span>
+          {page < pageCount ? (
+            <a href={href({ page: page + 1 })}>
+              <Button variant="outline" size="sm">Suivantes →</Button>
+            </a>
+          ) : (
+            <span />
+          )}
+        </div>
+      )}
     </div>
   );
 }
