@@ -164,14 +164,15 @@ model Topics {
 }
 
 model Messages {
-  id          Int        @id @default(autoincrement())
+  id          Int            @id @default(autoincrement())
   content     String
   date        String
-  createdAt   DateTime   @default(now())
+  createdAt   DateTime       @default(now())
   characterId Int
   topicId     Int
-  topic       Topics     @relation(fields: [topicId], references: [id])
-  character   Characters @relation(fields: [characterId], references: [id])
+  topic       Topics         @relation(fields: [topicId], references: [id])
+  character   Characters     @relation(fields: [characterId], references: [id])
+  quests      QuestMessage[]
 }
 
 // ─── Quêtes ───────────────────────────────────────────────────────────
@@ -195,6 +196,7 @@ model Quest {
   character   Characters   @relation(fields: [characterId], references: [id])
   topics      QuestTopic[]
   actors      QuestActor[]
+  anchors     QuestMessage[]
 
   @@index([characterId])
   @@index([status])
@@ -212,6 +214,21 @@ model QuestTopic {
 
   @@unique([questId, topicId])
   @@index([topicId])
+}
+
+// Le message précis qui porte la preuve : la phrase où la promesse est faite, où
+// la question reste sans réponse. Une intrigue longue se lit dans trois dates,
+// pas dans vingt fils. Ancrage facultatif : une quête vaut sans lui.
+model QuestMessage {
+  id        Int      @id @default(autoincrement())
+  questId   Int
+  messageId Int
+  note      String?
+  quest     Quest    @relation(fields: [questId], references: [id], onDelete: Cascade)
+  message   Messages @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([questId, messageId])
+  @@index([messageId])
 }
 
 model QuestActor {

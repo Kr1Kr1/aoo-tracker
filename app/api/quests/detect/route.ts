@@ -69,10 +69,22 @@ export async function POST(request: Request) {
         },
       ])
     );
+    // Une ancre ne vaut que si elle vient d'un message effectivement montré au
+    // modèle : sinon la « preuve » citerait un identifiant deviné.
+    const shownMessages = new Map<number, { topicId: number }>();
+    for (const thread of dossier.threads) {
+      for (const excerpt of thread.excerpts) shownMessages.set(excerpt.messageId, { topicId: thread.topicId });
+    }
+    for (const motif of dossier.motifs) {
+      for (const quote of motif.quotes) shownMessages.set(quote.messageId, { topicId: quote.topicId });
+    }
+
     const candidates = [];
     for (const candidate of raw) {
       const topicIds = [...new Set(candidate.topicIds)].filter((id) => allowedTopics.has(id));
       if (topicIds.length === 0) continue;
+
+      const messageIds = [...new Set(candidate.messageIds ?? [])].filter((id) => shownMessages.has(id));
 
       // Le titulaire du carnet n'est pas un « acteur » de sa propre quête : le
       // modèle le cite systématiquement, c'est du bruit dans les chips.
@@ -81,6 +93,12 @@ export async function POST(request: Request) {
       candidates.push({
         ...candidate,
         topicIds,
+        messageIds,
+        anchors: messageIds.map((id) => {
+          const source = shownMessages.get(id)!;
+          const topic = allowedTopics.get(source.topicId);
+          return { messageId: id, topicId: source.topicId, topicName: topic?.name ?? 'fil inconnu' };
+        }),
         topics: topicIds.map((id) => {
           const thread = allowedTopics.get(id)!;
           return {

@@ -66,6 +66,24 @@ export type QuestTopicView = {
   note: string | null;
 };
 
+/**
+ * La trace : le message précis où l'intrigue s'est nouée. C'est ce qui rend
+ * lisible une affaire de huit mois, là où la liste des fils ne dit que « ça
+ * s'est passé quelque part là-dedans ».
+ */
+export type QuestAnchorView = {
+  messageId: number;
+  topicId: number;
+  topicName: string;
+  link: string;
+  author: string;
+  at: number;
+  dateLabel: string;
+  /** Le passage lui-même, resserré : de quoi reconnaître le moment. */
+  excerpt: string;
+  note: string | null;
+};
+
 export type QuestActorView = {
   targetId: number;
   name: string;
@@ -84,6 +102,8 @@ export type QuestView = {
   createdAt: number;
   topics: QuestTopicView[];
   actors: QuestActorView[];
+  /** Messages cités comme preuve, du plus ancien au plus récent. */
+  anchors: QuestAnchorView[];
   /** Dernier message de l'un des fils rattachés, 0 si aucun fil. */
   lastAt: number;
   lastLabel: string;

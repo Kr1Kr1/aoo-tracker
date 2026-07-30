@@ -33,6 +33,8 @@ export type QuestBrief = {
   nextStep: string | null;
   status: string;
   actors: { name: string; role: string | null }[];
+  /** La trace : les messages cités comme preuve, du plus ancien au plus récent. */
+  anchors: { dateLabel: string; author: string; topicName: string; excerpt: string }[];
   threads: {
     name: string;
     channel: string;
@@ -55,6 +57,14 @@ function renderQuest(quest: QuestBrief): string {
       : null,
   ].filter(Boolean);
 
+  // La trace dit à quelle phrase l'affaire s'est nouée : c'est ce qu'une relance
+  // peut rappeler sans rien inventer.
+  const anchors = quest.anchors.length
+    ? `\n\n### La trace\n${quest.anchors
+        .map((a) => `- ${a.dateLabel}, ${a.author} (« ${a.topicName} ») : « ${a.excerpt} »`)
+        .join('\n')}`
+    : '';
+
   const threads = quest.threads
     .map((thread) => {
       const header = `### Fil rattaché : « ${thread.name} » (${thread.channel}, dernier message le ${thread.lastLabel}${
@@ -67,7 +77,8 @@ function renderQuest(quest: QuestBrief): string {
     })
     .join('\n\n');
 
-  return threads ? `${lines.join('\n')}\n\n${threads}` : lines.join('\n');
+  const head = `${lines.join('\n')}${anchors}`;
+  return threads ? `${head}\n\n${threads}` : head;
 }
 
 export async function generateQuestMissives(opts: {

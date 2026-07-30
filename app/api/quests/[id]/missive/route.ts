@@ -16,6 +16,8 @@ const DAY_MS = 86_400_000;
 const EXCERPTS_PER_THREAD = 3;
 const EXCERPT_CHARS = 900;
 const THREADS_IN_BRIEF = 3;
+/** Une ancre se cite, elle ne se relit pas en entier. */
+const ANCHOR_CHARS = 400;
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const origin = request.headers.get('origin');
@@ -32,6 +34,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       include: {
         character: { select: { id: true, targetId: true, name: true } },
         actors: { include: { character: { select: { name: true } } } },
+        anchors: {
+          include: {
+            message: {
+              select: {
+                content: true,
+                date: true,
+                createdAt: true,
+                character: { select: { name: true } },
+                topic: { select: { name: true } },
+              },
+            },
+          },
+        },
         topics: {
           include: {
             topic: {
@@ -130,6 +145,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       nextStep: quest.nextStep,
       status: quest.status,
       actors: quest.actors.map((a) => ({ name: a.character.name, role: a.role })),
+      // La trace : les messages que l'auteur a retenus comme preuve. C'est le
+      // rappel le plus sûr pour une relance, puisqu'il est cité mot pour mot.
+      anchors: quest.anchors
+        .map((anchor) => ({
+          at: messageTime(anchor.message),
+          dateLabel: new Date(messageTime(anchor.message)).toLocaleDateString('fr-FR'),
+          author: anchor.message.character.name,
+          topicName: anchor.message.topic.name,
+          excerpt: htmlToPlainText(anchor.message.content).slice(0, ANCHOR_CHARS),
+        }))
+        .sort((a, b) => a.at - b.at)
+        .map(({ at, ...anchor }) => anchor),
       threads: threads.map((t) => t.brief),
     };
 

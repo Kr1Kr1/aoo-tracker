@@ -30,6 +30,15 @@ export type CharacterOption = { targetId: number; name: string };
 
 type ActorDraft = { targetId: number | null; name: string; role: string };
 
+/** Une ancre : le message précis qui porte la preuve de l'intrigue. */
+type AnchorDraft = {
+  messageId: number;
+  dateLabel: string;
+  author: string;
+  topicName: string;
+  excerpt: string;
+};
+
 type QuestDraft = {
   title: string;
   summary: string;
@@ -38,6 +47,7 @@ type QuestDraft = {
   status: QuestStatus;
   topicIds: number[];
   actors: ActorDraft[];
+  anchors: AnchorDraft[];
 };
 
 type Candidate = {
@@ -49,6 +59,8 @@ type Candidate = {
   status: QuestStatus;
   topicIds: number[];
   topics: { topicId: number; name: string; channel: QuestChannel; involved: boolean; silentDays: number }[];
+  messageIds: number[];
+  anchors: { messageId: number; topicId: number; topicName: string }[];
   actors: CharacterOption[];
   unknownActors: string[];
 };
@@ -69,6 +81,7 @@ const emptyDraft: QuestDraft = {
   status: 'lead',
   topicIds: [],
   actors: [],
+  anchors: [],
 };
 
 function draftFromQuest(quest: QuestView): QuestDraft {
@@ -80,6 +93,13 @@ function draftFromQuest(quest: QuestView): QuestDraft {
     status: quest.status,
     topicIds: quest.topics.map((t) => t.topicId),
     actors: quest.actors.map((a) => ({ targetId: a.targetId, name: a.name, role: a.role ?? '' })),
+    anchors: quest.anchors.map((a) => ({
+      messageId: a.messageId,
+      dateLabel: a.dateLabel,
+      author: a.author,
+      topicName: a.topicName,
+      excerpt: a.excerpt,
+    })),
   };
 }
 
@@ -170,6 +190,7 @@ export function QuestBoard({
         characterTargetId: character.targetId,
         ...draft,
         origin,
+        messageIds: draft.anchors.map((a) => a.messageId),
         actors: draft.actors.map((a) => ({ targetId: a.targetId ?? undefined, name: a.name, role: a.role })),
       }),
     });
@@ -230,6 +251,7 @@ export function QuestBoard({
           name: a.name,
           role: '',
         })),
+        anchors: [],
       });
       setFormKey((key) => key + 1);
       setCompose({ status: 'idle' });
@@ -270,6 +292,13 @@ export function QuestBoard({
         status: candidate.status,
         topicIds: candidate.topicIds,
         actors: candidate.actors.map((a) => ({ targetId: a.targetId, name: a.name, role: '' })),
+        anchors: (candidate.anchors ?? []).map((a) => ({
+          messageId: a.messageId,
+          dateLabel: '',
+          author: '',
+          topicName: a.topicName,
+          excerpt: '',
+        })),
       },
       'ai'
     );
@@ -438,6 +467,13 @@ export function QuestBoard({
                     </span>
                   ))}
                 </div>
+                {candidate.anchors?.length > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Trace conservée : {candidate.anchors.length} message
+                    {candidate.anchors.length > 1 ? 's' : ''} ({' '}
+                    {candidate.anchors.map((a) => a.topicName).join(', ')} )
+                  </p>
+                )}
                 {candidate.unknownActors.length > 0 && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     Noms cités sans fiche en base, non rattachés : {candidate.unknownActors.join(', ')}
@@ -473,6 +509,7 @@ export function QuestBoard({
                       method: 'PATCH',
                       body: JSON.stringify({
                         ...draft,
+                        messageIds: draft.anchors.map((a) => a.messageId),
                         actors: draft.actors.map((a) => ({
                           targetId: a.targetId ?? undefined,
                           name: a.name,
@@ -628,6 +665,33 @@ function QuestCard({
                 {actor.name}
                 {actor.role ? ` · ${actor.role}` : ''}
               </span>
+            ))}
+          </div>
+        )}
+
+        {quest.anchors.length > 0 && (
+          <div className="space-y-1 border-l-2 pl-3">
+            <p className={labelClass}>
+              La trace ({quest.anchors.length} message{quest.anchors.length > 1 ? 's' : ''})
+            </p>
+            {quest.anchors.map((anchor) => (
+              <div key={anchor.messageId} className="text-xs">
+                <span className="font-medium">{anchor.dateLabel}</span>
+                <span className="text-muted-foreground">
+                  {' '}
+                  · {anchor.author} ·{' '}
+                  <a
+                    href={anchor.link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline-offset-2 hover:underline"
+                  >
+                    {anchor.topicName}
+                  </a>
+                </span>
+                <p className="italic text-muted-foreground">« {anchor.excerpt} »</p>
+                {anchor.note && <p className="text-muted-foreground">{anchor.note}</p>}
+              </div>
             ))}
           </div>
         )}
@@ -790,6 +854,42 @@ function QuestForm({
           ))}
         </select>
       </div>
+
+      {draft.anchors.length > 0 && (
+        <div>
+          <label className={labelClass}>
+            La trace : messages cités comme preuve (retirables, pas modifiables ici)
+          </label>
+          <div className="mt-1 space-y-1">
+            {draft.anchors.map((anchor) => (
+              <div
+                key={anchor.messageId}
+                className="flex items-start justify-between gap-2 rounded border px-2 py-1 text-xs"
+              >
+                <div className="min-w-0">
+                  <span className="font-medium">{anchor.dateLabel || `msg#${anchor.messageId}`}</span>
+                  {anchor.author && <span className="text-muted-foreground"> · {anchor.author}</span>}
+                  {anchor.topicName && (
+                    <span className="text-muted-foreground"> · {anchor.topicName}</span>
+                  )}
+                  {anchor.excerpt && (
+                    <p className="truncate italic text-muted-foreground">« {anchor.excerpt} »</p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={() =>
+                    set('anchors', draft.anchors.filter((a) => a.messageId !== anchor.messageId))
+                  }
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <label className={labelClass}>Personnages impliqués</label>

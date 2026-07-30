@@ -23,6 +23,12 @@ const CandidateSchema = z.object({
     .enum(['lead', 'engaged', 'waiting'])
     .describe("lead = pas encore entrée dedans, engaged = balle dans son camp, waiting = attend un tiers"),
   topicIds: z.array(z.number()).min(1).describe('Identifiants des fils fournis qui portent cette intrigue'),
+  messageIds: z
+    .array(z.number())
+    .max(6)
+    .describe(
+      'Identifiants msg#… des messages précis qui prouvent l\'intrigue : celui qui la noue, celui qui la laisse en suspens. Deux ou trois suffisent, du plus ancien au plus récent.'
+    ),
   actors: z
     .array(z.string())
     .describe('Noms des AUTRES personnages impliqués, tels qu\'ils apparaissent dans les fils'),
@@ -51,7 +57,7 @@ function renderThread(thread: CandidateThread): string {
   ].join('\n');
 
   const body = thread.excerpts
-    .map((e) => `--- ${e.author} (${e.date}) ---\n${e.text}`)
+    .map((e) => `--- msg#${e.messageId} · ${e.author} (${e.date}) ---\n${e.text}`)
     .join('\n\n');
 
   return `${header}\n\n${body}`;
@@ -66,7 +72,10 @@ function renderMotif(motif: RecurringMotif, characterName: string): string {
     `\nFils : ${motif.topicIds.map((id) => `#${id}`).join(', ')}`;
 
   const quotes = motif.quotes
-    .map((q) => `- ${q.dateLabel} (fil #${q.topicId}, « ${q.topicName} ») : « ${q.text} »`)
+    .map(
+      (q) =>
+        `- ${q.dateLabel} (msg#${q.messageId}, fil #${q.topicId}, « ${q.topicName} ») : « ${q.text} »`
+    )
     .join('\n');
 
   return `${header}\n${quotes}`;
@@ -112,7 +121,7 @@ Le dossier a deux parties. Les **fils** te donnent le détail de ce qui se dit e
 
 Cinq règles, dans l'ordre de priorité :
 1. **N'invente rien.** Chaque fait que tu écris doit être lisible dans les extraits fournis. Un extrait marqué « extrait coupé ici » est tronqué par l'outil : ce n'est pas une phrase laissée en suspens, n'en fais pas un mystère. Pas d'événement supposé, pas d'objet, pas de règle de jeu, pas de personnage absent des fils. Si une intrigue est trop mince pour être décrite sans combler les trous, ne la propose pas.
-2. **Cite tes fils.** \`topicIds\` ne contient que des identifiants présents dans le dossier ci-dessous. Une quête sans fil n'existe pas. Dans \`actors\`, ne liste que les autres personnages : ${opts.characterName} tient ce carnet, elle n'y figure pas comme partie prenante.
+2. **Cite tes fils, et tes preuves.** \`topicIds\` ne contient que des identifiants présents dans le dossier ci-dessous. Une quête sans fil n'existe pas. \`messageIds\` ne contient que des \`msg#…\` lus ci-dessous : le message qui noue l'affaire, celui qui la laisse en plan. C'est la trace que l'auteur relira dans six mois, choisis-la comme telle. Dans \`actors\`, ne liste que les autres personnages : ${opts.characterName} tient ce carnet, elle n'y figure pas comme partie prenante.
 3. **Sois concret sur la suite.** \`nextStep\` est une action que ${opts.characterName} peut faire dès maintenant (écrire à quelqu'un de nommé, se rendre quelque part de nommé, poser une question précise), pas une intention vague.
 4. **Distingue implication et opportunité.** Si elle écrit déjà dans le fil : \`engaged\` (à elle de jouer) ou \`waiting\` (elle attend un tiers). Si elle n'y a jamais écrit : \`lead\`, et \`stake\` explique pourquoi ça pourrait la concerner.
 5. **Le silence ne clôt rien.** Une affaire ouverte il y a huit mois et jamais tranchée reste une intrigue : c'est même la plus intéressante, parce que personne n'y pense plus. Quand une quête vient d'un fil rouge, ouvre le \`summary\` par sa durée, en clair et daté (« Depuis le 04/09/2025, … »), et rattache dans \`topicIds\` tous les fils du dossier où l'affaire se lit, pas seulement le plus récent.

@@ -75,6 +75,23 @@ export async function readableTopicIds(ctx: CallerContext, topicIds: number[]): 
   return [...open, ...mine.map((m) => m.topicId)];
 }
 
+/**
+ * Messages qu'une quête peut citer comme preuve : ceux dont le fil est déjà
+ * lisible par l'appelant. Un ancrage ne doit pas devenir une porte dérobée vers
+ * une missive à laquelle le compte n'a pas accès.
+ */
+export async function readableMessageIds(ctx: CallerContext, messageIds: number[]): Promise<number[]> {
+  const unique = [...new Set(messageIds)].filter((id) => Number.isInteger(id));
+  if (unique.length === 0) return [];
+
+  const messages = await prisma.messages.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, topicId: true },
+  });
+  const allowedTopics = new Set(await readableTopicIds(ctx, messages.map((m) => m.topicId)));
+  return messages.filter((m) => allowedTopics.has(m.topicId)).map((m) => m.id);
+}
+
 export type ActorInput = { targetId?: number | string; name?: string; role?: string };
 
 /**

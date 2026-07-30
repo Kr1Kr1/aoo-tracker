@@ -92,11 +92,28 @@ async function topicActivity(topicIds: number[], mineCharacterId: number) {
   return result;
 }
 
+/** Longueur d'une citation d'ancre : de quoi reconnaître le moment, pas le relire. */
+const ANCHOR_CHARS = 320;
+
 export async function listQuests(characterId: number): Promise<QuestView[]> {
   const quests = await prisma.quest.findMany({
     where: { characterId },
     include: {
       topics: { select: { topicId: true, note: true } },
+      anchors: {
+        include: {
+          message: {
+            select: {
+              id: true,
+              content: true,
+              date: true,
+              createdAt: true,
+              character: { select: { name: true } },
+              topic: { select: { id: true, name: true, link: true } },
+            },
+          },
+        },
+      },
       actors: {
         include: {
           character: { select: { targetId: true, name: true, faction: { select: { name: true } } } },
@@ -121,6 +138,25 @@ export async function listQuests(characterId: number): Promise<QuestView[]> {
 
     const lastAt = topics.reduce((max, t) => Math.max(max, t.lastAt), 0);
 
+    // Les ancres se lisent dans l'ordre où l'affaire s'est nouée.
+    const anchors = quest.anchors
+      .map((anchor) => {
+        const at = messageTime(anchor.message);
+        const text = htmlToPlainText(anchor.message.content);
+        return {
+          messageId: anchor.message.id,
+          topicId: anchor.message.topic.id,
+          topicName: anchor.message.topic.name,
+          link: anchor.message.topic.link,
+          author: anchor.message.character.name,
+          at,
+          dateLabel: formatDay(at),
+          excerpt: text.length > ANCHOR_CHARS ? `${text.slice(0, ANCHOR_CHARS)}…` : text,
+          note: anchor.note,
+        };
+      })
+      .sort((a, b) => a.at - b.at);
+
     return {
       id: quest.id,
       title: quest.title,
@@ -137,6 +173,7 @@ export async function listQuests(characterId: number): Promise<QuestView[]> {
         faction: a.character.faction?.name ?? 'Sans faction',
         role: a.role,
       })),
+      anchors,
       lastAt,
       lastLabel: formatDay(lastAt),
       staleDays: lastAt ? Math.floor((now - lastAt) / DAY_MS) : null,
@@ -239,7 +276,7 @@ export type CandidateThread = {
   /** Auteur du dernier message : dit dans quel camp est la balle. */
   lastAuthor: string;
   lastIsMine: boolean;
-  excerpts: { author: string; date: string; text: string }[];
+  excerpts: { messageId: number; author: string; date: string; text: string }[];
 };
 
 /**
@@ -293,6 +330,7 @@ async function readRecurringMotifs(characterId: number, characterName: string, c
     prisma.messages.findMany({
       where: { characterId, topic: { forum: { type: { not: 'HRP' } } } },
       select: {
+        id: true,
         topicId: true,
         content: true,
         date: true,
@@ -309,6 +347,7 @@ async function readRecurringMotifs(characterId: number, characterName: string, c
 
   return extractRecurringMotifs({
     messages: ownMessages.map((m) => ({
+      messageId: m.id,
       topicId: m.topicId,
       topicName: m.topic.name,
       at: messageTime(m),
@@ -447,6 +486,7 @@ export async function buildDetectionDossier(characterId: number): Promise<Detect
       excerpts: [...opening, ...closing].map((m) => {
         const text = htmlToPlainText(m.content);
         return {
+          messageId: m.id,
           author: m.character.name,
           date: m.date,
           // La coupure est signalée : sans marque, un long message coupé se lit

@@ -5,6 +5,7 @@ import { getCallerContext } from '@/lib/authContext';
 import {
   resolveQuestCharacter,
   readableTopicIds,
+  readableMessageIds,
   resolveActors,
   cleanText,
 } from '@/lib/questAccess';
@@ -54,6 +55,15 @@ export async function POST(request: Request) {
       : [];
     const actors = Array.isArray(body.actors) ? await resolveActors(body.actors) : { rows: [], unknown: [] };
 
+    // La trace : les messages précis qui portent l'intrigue. Facultatifs, mais
+    // c'est ce qui rend lisible une affaire étalée sur des mois.
+    const messageIds = Array.isArray(body.messageIds)
+      ? await readableMessageIds(
+          ctx,
+          body.messageIds.map((id: unknown) => parseInt(String(id), 10))
+        )
+      : [];
+
     const quest = await prisma.quest.create({
       data: {
         characterId: resolution.character.id,
@@ -64,16 +74,22 @@ export async function POST(request: Request) {
         status,
         origin: origin_,
         topics: { create: topicIds.map((topicId) => ({ topicId })) },
+        anchors: { create: messageIds.map((messageId) => ({ messageId })) },
         actors: { create: actors.rows },
       },
       select: { id: true },
     });
 
     logger.info(
-      `Quest ${quest.id} created for ${resolution.character.name} (${origin_}, ${topicIds.length} fil(s))`
+      `Quest ${quest.id} created for ${resolution.character.name} (${origin_}, ${topicIds.length} fil(s), ${messageIds.length} ancre(s))`
     );
     return jsonResponse(
-      { id: quest.id, linkedTopics: topicIds.length, unknownActors: actors.unknown },
+      {
+        id: quest.id,
+        linkedTopics: topicIds.length,
+        linkedMessages: messageIds.length,
+        unknownActors: actors.unknown,
+      },
       { status: 201, origin }
     );
   } catch (err) {

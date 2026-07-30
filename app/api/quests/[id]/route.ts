@@ -2,7 +2,7 @@ import prisma from '@/lib/prisma';
 import { logger } from '@/lib/logger';
 import { jsonResponse, errorResponse, preflight, parseTargetId } from '@/lib/api';
 import { getCallerContext, canAccessTargetId, type CallerContext } from '@/lib/authContext';
-import { readableTopicIds, resolveActors, cleanText } from '@/lib/questAccess';
+import { readableTopicIds, readableMessageIds, resolveActors, cleanText } from '@/lib/questAccess';
 import { isQuestStatus } from '@/lib/questStatus';
 
 /** Une quête appartient au carnet d'un personnage : mêmes droits que ce personnage. */
@@ -66,6 +66,19 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         if (topicIds.length > 0) {
           await tx.questTopic.createMany({
             data: topicIds.map((topicId) => ({ questId, topicId })),
+          });
+        }
+      }
+
+      if (Array.isArray(body.messageIds)) {
+        const messageIds = await readableMessageIds(
+          ctx,
+          body.messageIds.map((raw: unknown) => parseInt(String(raw), 10))
+        );
+        await tx.questMessage.deleteMany({ where: { questId } });
+        if (messageIds.length > 0) {
+          await tx.questMessage.createMany({
+            data: messageIds.map((messageId) => ({ questId, messageId })),
           });
         }
       }

@@ -20,6 +20,7 @@
 const DAY_MS = 86_400_000;
 
 export type MotifSource = {
+  messageId: number;
   topicId: number;
   topicName: string;
   /** Date du message, en ms. */
@@ -29,6 +30,8 @@ export type MotifSource = {
 };
 
 export type MotifQuote = {
+  /** Le message d'où sort la citation : c'est lui qu'une quête peut ancrer. */
+  messageId: number;
   topicId: number;
   topicName: string;
   dateLabel: string;
@@ -99,10 +102,6 @@ const CUES = [
 ];
 
 /**
- * Les apartés HRP se glissent dans les fils RP (« HRP : je serai absente… »).
- * Ils parlent des joueurs, pas de l'histoire : on les retire avant de compter.
- */
-/**
  * Vrai si une seule correction sépare les deux mots : ajout, retrait,
  * substitution ou inversion de deux lettres voisines (« Preatorium »).
  */
@@ -141,6 +140,10 @@ function cueScore(text: string): number {
   return CUES.reduce((total, cue) => (folded.includes(cue) ? total + 1 : total), 0);
 }
 
+/**
+ * Les apartés HRP se glissent dans les fils RP (« HRP : je serai absente… »).
+ * Ils parlent des joueurs, pas de l'histoire : on les retire avant de compter.
+ */
 function stripHrpAsides(text: string): string {
   return text
     .split('\n')
@@ -335,6 +338,7 @@ export function extractRecurringMotifs(opts: {
       bucket.firstAt = Math.min(bucket.firstAt, message.at);
       bucket.lastAt = Math.max(bucket.lastAt, message.at);
       bucket.quotes.push({
+        messageId: message.messageId,
         topicId: message.topicId,
         topicName: message.topicName,
         dateLabel: formatDay(message.at),
