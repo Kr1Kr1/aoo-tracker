@@ -28,3 +28,6 @@ public/assets/
 .DS_Store
 .vscode/
 .idea/
+
+# Scripts de mise au point jetables (chargés depuis la racine pour résoudre @prisma/client)
+tmp-*.mjs

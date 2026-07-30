@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { messageTime, sortMessagesChronologically } from '@/lib/messageDate';
 import { htmlToPlainText } from '@/lib/ai/draftReplies';
+import { countTermMentions, extractRecurringMotifs, type RecurringMotif } from '@/lib/questMotifs';
 import {
   CHANNEL_LABEL,
   channelOfForumType,
@@ -235,29 +236,104 @@ export type CandidateThread = {
   messageCount: number;
   lastLabel: string;
   silentDays: number;
+  /** Auteur du dernier message : dit dans quel camp est la balle. */
+  lastAuthor: string;
+  lastIsMine: boolean;
   excerpts: { author: string; date: string; text: string }[];
 };
+
+/**
+ * Fil citable par le modèle sans être détaillé dans le dossier : il porte un
+ * fil rouge, mais son contenu se lit dans les citations du motif.
+ */
+export type CitableTopic = Pick<
+  CandidateThread,
+  'topicId' | 'name' | 'channel' | 'involved' | 'silentDays'
+>;
 
 export type DetectionDossier = {
   character: { id: number; targetId: number; name: string };
   threads: CandidateThread[];
+  /** Ce qui revient sous sa plume au fil des mois (cf. lib/questMotifs). */
+  motifs: RecurringMotif[];
+  /** Fils cités par les motifs et absents du dossier détaillé. */
+  motifTopics: CitableTopic[];
 };
 
 // Le dossier part chez un modèle : il est plafonné pour rester lisible et tenir
 // dans une fenêtre raisonnable. Les fils où le personnage a écrit pèsent plus
 // lourd que ceux qu'il ne fait qu'observer.
-const MINE_LIMIT = 20;
-const AROUND_LIMIT = 10;
+// Le dossier tient dans une fenêtre de contexte, mais surtout dans le temps
+// imparti à la route (cf. maxDuration) : à 100 000 caractères la détection
+// frôlait les cinq minutes. Les fils rouges valent mieux que des extraits plus
+// longs, à budget égal.
+const MINE_LIMIT = 16;
+const AROUND_LIMIT = 8;
 const EXCERPTS_PER_THREAD = 4;
-const EXCERPT_CHARS = 700;
-/** Au-delà, le fil relève de l'archive plutôt que de l'intrigue en cours. */
+const EXCERPT_CHARS = 550;
+/** Au-delà, un fil ne compte plus comme « en cours » : il faut une raison de le rouvrir. */
 const MAX_SILENT_DAYS = 120;
+/**
+ * Fils dormants repêchés parce qu'un fil rouge y passe. C'est là que se cachent
+ * les poursuites longues : quand Medarda cherche Zeus depuis huit mois, un seul
+ * de ses fils sur le sujet est encore frais, les autres dorment.
+ */
+const DORMANT_LIMIT = 8;
+const DORMANT_MAX_SILENT_DAYS = 400;
+const MOTIF_LIMIT = 8;
+
+/**
+ * Ce que le personnage a écrit, tous fils et toutes époques confondus (hors
+ * HRP), et ce que le reste du forum a écrit à côté. Le premier lot donne les
+ * fils rouges, le second sert d'étalon : un nom que tout le monde emploie est
+ * du décor, pas une intrigue.
+ */
+async function readRecurringMotifs(characterId: number, characterName: string, covered: string[]) {
+  const [ownMessages, otherMessages, knownCharacters] = await Promise.all([
+    prisma.messages.findMany({
+      where: { characterId, topic: { forum: { type: { not: 'HRP' } } } },
+      select: {
+        topicId: true,
+        content: true,
+        date: true,
+        createdAt: true,
+        topic: { select: { name: true } },
+      },
+    }),
+    prisma.messages.findMany({
+      where: { characterId: { not: characterId }, topic: { forum: { type: { not: 'HRP' } } } },
+      select: { content: true },
+    }),
+    prisma.characters.findMany({ select: { name: true } }),
+  ]);
+
+  return extractRecurringMotifs({
+    messages: ownMessages.map((m) => ({
+      topicId: m.topicId,
+      topicName: m.topic.name,
+      at: messageTime(m),
+      text: htmlToPlainText(m.content),
+    })),
+    knownNames: knownCharacters.map((c) => c.name),
+    ownName: characterName,
+    covered,
+    background: {
+      counts: countTermMentions(otherMessages.map((m) => htmlToPlainText(m.content))),
+      total: otherMessages.length,
+    },
+    limit: MOTIF_LIMIT,
+  });
+}
 
 /**
  * Rassemble les fils encore ouverts susceptibles de porter une intrigue non
  * résolue : ceux où le personnage a écrit, plus quelques fils RP récents où il
  * n'est pas encore entré (là où il « pourrait vouloir s'impliquer »). Les fils
  * déjà rattachés à une quête, clôturés ou HRP sont écartés.
+ *
+ * S'y ajoute la lecture au long cours : les fils rouges, et les fils dormants
+ * qu'ils désignent. Un dossier de fils frais ne montre que le présent ; une
+ * intrigue peut avoir huit mois et rester ouverte.
  */
 export async function buildDetectionDossier(characterId: number): Promise<DetectionDossier | null> {
   const character = await prisma.characters.findUnique({
@@ -266,14 +342,20 @@ export async function buildDetectionDossier(characterId: number): Promise<Detect
   });
   if (!character) return null;
 
-  const alreadyLinked = new Set(
-    (
-      await prisma.questTopic.findMany({
-        where: { quest: { characterId } },
-        select: { topicId: true },
-      })
-    ).map((t) => t.topicId)
+  const existingQuests = await prisma.quest.findMany({
+    where: { characterId },
+    select: { title: true, summary: true, topics: { select: { topicId: true } } },
+  });
+  const alreadyLinked = new Set(existingQuests.flatMap((q) => q.topics.map((t) => t.topicId)));
+
+  // Les fils rouges se lisent sur tout l'historique, pas sur le vivier de fils
+  // ouverts : ils servent ensuite à choisir quels fils dormants rouvrir.
+  const motifs = await readRecurringMotifs(
+    characterId,
+    character.name,
+    existingQuests.flatMap((q) => [q.title, q.summary ?? ''])
   );
+  const motifTopicIds = new Set(motifs.flatMap((m) => m.topicIds));
 
   const mineTopicIds = (
     await prisma.messages.findMany({
@@ -310,7 +392,7 @@ export async function buildDetectionDossier(characterId: number): Promise<Detect
     ...mineTopics.map((t) => ({ ...t, involved: true })),
     ...aroundTopics.map((t) => ({ ...t, involved: false })),
   ].filter((t) => !alreadyLinked.has(t.id));
-  if (pool.length === 0) return { character, threads: [] };
+  if (pool.length === 0) return { character, threads: [], motifs, motifTopics: [] };
 
   const messages = await prisma.messages.findMany({
     where: { topicId: { in: pool.map((t) => t.id) } },
@@ -339,8 +421,17 @@ export async function buildDetectionDossier(characterId: number): Promise<Detect
     const bucket = sortMessagesChronologically(byTopic.get(topic.id) ?? []);
     const last = bucket[bucket.length - 1];
     if (!last) continue;
-    const silentDays = Math.floor((now - messageTime(last)) / DAY_MS);
-    if (silentDays > MAX_SILENT_DAYS) continue;
+    const silentDays = Math.max(Math.floor((now - messageTime(last)) / DAY_MS), 0);
+
+    // Passé le délai, un fil ne revient au dossier que si un fil rouge y passe.
+    const dormant = silentDays > MAX_SILENT_DAYS;
+    if (dormant && !(topic.involved && motifTopicIds.has(topic.id))) continue;
+    if (silentDays > DORMANT_MAX_SILENT_DAYS) continue;
+
+    // L'amorce du fil dit ce qui a été demandé ou promis ; la fin dit où ça en
+    // est resté. Ne garder que la fin, c'est lire une intrigue par son silence.
+    const opening = bucket.length > EXCERPTS_PER_THREAD ? [bucket[0]] : [];
+    const closing = bucket.slice(-(EXCERPTS_PER_THREAD - opening.length));
 
     threads.push({
       topicId: topic.id,
@@ -350,18 +441,92 @@ export async function buildDetectionDossier(characterId: number): Promise<Detect
       participants: [...new Set(bucket.map((m) => m.character.name))],
       messageCount: bucket.length,
       lastLabel: formatDay(messageTime(last)),
-      silentDays: Math.max(silentDays, 0),
-      excerpts: bucket.slice(-EXCERPTS_PER_THREAD).map((m) => ({
-        author: m.character.name,
-        date: m.date,
-        text: htmlToPlainText(m.content).slice(0, EXCERPT_CHARS),
-      })),
+      silentDays,
+      lastAuthor: last.character.name,
+      lastIsMine: last.character.name === character.name,
+      excerpts: [...opening, ...closing].map((m) => {
+        const text = htmlToPlainText(m.content);
+        return {
+          author: m.character.name,
+          date: m.date,
+          // La coupure est signalée : sans marque, un long message coupé se lit
+          // comme une phrase laissée en suspens, et le modèle en fait un mystère.
+          text:
+            text.length > EXCERPT_CHARS
+              ? `${text.slice(0, EXCERPT_CHARS)} […extrait coupé ici, le message continue…]`
+              : text,
+        };
+      }),
     });
   }
 
-  threads.sort((a, b) => a.silentDays - b.silentDays);
-  const mine = threads.filter((t) => t.involved).slice(0, MINE_LIMIT);
-  const around = threads.filter((t) => !t.involved).slice(0, AROUND_LIMIT);
+  // Le forum a servi le même fil sous deux liens (cf. la normalisation dans
+  // /api/forums) : la base en garde des copies, que le modèle citerait comme
+  // deux fils distincts. On ne garde que la copie la mieux fournie.
+  const canonical = new Map<string, CandidateThread>();
+  for (const thread of threads) {
+    const key = normalizeName(thread.name);
+    const kept = canonical.get(key);
+    if (!kept || thread.messageCount > kept.messageCount) canonical.set(key, thread);
+  }
+  const deduped = [...canonical.values()];
 
-  return { character, threads: [...mine, ...around] };
+  deduped.sort((a, b) => a.silentDays - b.silentDays);
+  const fresh = deduped.filter((t) => t.silentDays <= MAX_SILENT_DAYS);
+  const mine = fresh.filter((t) => t.involved).slice(0, MINE_LIMIT);
+  const around = fresh.filter((t) => !t.involved).slice(0, AROUND_LIMIT);
+  // Un dormant vaut d'être rouvert pour le fil rouge qui le traverse, pas pour
+  // sa longueur : les fils de coordination sont les plus bavards et les moins
+  // romanesques. On classe donc sur le meilleur motif qui le cite.
+  const motifRank = new Map<number, number>();
+  motifs.forEach((motif, index) => {
+    for (const topicId of motif.topicIds) {
+      motifRank.set(topicId, Math.min(motifRank.get(topicId) ?? index, index));
+    }
+  });
+  const dormant = deduped
+    .filter((t) => t.silentDays > MAX_SILENT_DAYS)
+    .sort(
+      (a, b) =>
+        (motifRank.get(a.topicId) ?? motifs.length) - (motifRank.get(b.topicId) ?? motifs.length) ||
+        b.messageCount - a.messageCount
+    )
+    .slice(0, DORMANT_LIMIT);
+
+  const detailed = [...mine, ...around, ...dormant];
+  const detailedIds = new Set(detailed.map((t) => t.topicId));
+  const keptNames = new Set(detailed.map((t) => normalizeName(t.name)));
+
+  // Les autres fils que citent les motifs restent citables : leur contenu se lit
+  // dans les citations du fil rouge, on ne redonne que leur identité.
+  const missing = [...motifTopicIds].filter((id) => !detailedIds.has(id) && !alreadyLinked.has(id));
+  const motifTopics: CitableTopic[] = [];
+  if (missing.length > 0) {
+    const extra = await prisma.topics.findMany({
+      where: { id: { in: missing } },
+      select: { id: true, name: true, forumId: true },
+    });
+    const extraActivity = await topicActivity(
+      extra.map((t) => t.id),
+      characterId
+    );
+    for (const topic of extra) {
+      // Même règle que plus haut : un fil déjà présent sous un autre identifiant
+      // (copie, ou version détaillée du dossier) n'est pas proposé deux fois.
+      const key = normalizeName(topic.name);
+      if (keptNames.has(key)) continue;
+      keptNames.add(key);
+
+      const meta = extraActivity.get(topic.id);
+      motifTopics.push({
+        topicId: topic.id,
+        name: topic.name,
+        channel: channelOfForumType(forumType.get(topic.forumId)),
+        involved: true,
+        silentDays: meta?.lastAt ? Math.max(Math.floor((now - meta.lastAt) / DAY_MS), 0) : 0,
+      });
+    }
+  }
+
+  return { character, threads: detailed, motifs, motifTopics };
 }

@@ -3,7 +3,7 @@ import { logger } from '@/lib/logger';
 import { jsonResponse, errorResponse, preflight } from '@/lib/api';
 import { getCallerContext } from '@/lib/authContext';
 import { resolveQuestCharacter } from '@/lib/questAccess';
-import { buildDetectionDossier, resolveCharactersByName } from '@/lib/quests';
+import { buildDetectionDossier, resolveCharactersByName, type CitableTopic } from '@/lib/quests';
 import { loadVoiceProfile } from '@/lib/ai/draftReplies';
 import { detectQuestCandidates } from '@/lib/ai/questDetection';
 
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const dossier = await buildDetectionDossier(character.id);
     if (!dossier) return errorResponse('Personnage introuvable', 404, origin);
     if (dossier.threads.length === 0) {
-      return jsonResponse({ character, candidates: [], threadsRead: 0 }, { origin });
+      return jsonResponse({ character, candidates: [], threadsRead: 0, motifsRead: 0 }, { origin });
     }
 
     const [profile, existing] = await Promise.all([
@@ -47,15 +47,28 @@ export async function POST(request: Request) {
       characterName: character.name,
       profile,
       threads: dossier.threads,
+      motifs: dossier.motifs,
+      motifTopics: dossier.motifTopics,
       existingTitles: existing.map((q) => q.title),
       count,
       instructions,
     });
 
-    // Garde-fou : le modèle ne peut citer que les fils du dossier, et ne peut
-    // nommer que des personnages connus de la base. Ce qui déborde est écarté
-    // plutôt que rattaché à l'aveugle.
-    const allowedTopics = new Map(dossier.threads.map((t) => [t.topicId, t]));
+    // Garde-fou : le modèle ne peut citer que les fils du dossier (détaillés ou
+    // désignés par un fil rouge), et ne peut nommer que des personnages connus
+    // de la base. Ce qui déborde est écarté plutôt que rattaché à l'aveugle.
+    const allowedTopics = new Map<number, CitableTopic>(
+      [...dossier.motifTopics, ...dossier.threads].map((t) => [
+        t.topicId,
+        {
+          topicId: t.topicId,
+          name: t.name,
+          channel: t.channel,
+          involved: t.involved,
+          silentDays: t.silentDays,
+        },
+      ])
+    );
     const candidates = [];
     for (const candidate of raw) {
       const topicIds = [...new Set(candidate.topicIds)].filter((id) => allowedTopics.has(id));
@@ -84,10 +97,23 @@ export async function POST(request: Request) {
     }
 
     logger.info(
-      `Quest detection for ${character.name}: ${candidates.length} candidate(s) from ${dossier.threads.length} thread(s)`
+      `Quest detection for ${character.name}: ${candidates.length} candidate(s) from ${dossier.threads.length} thread(s) and ${dossier.motifs.length} recurring motif(s)`
     );
     return jsonResponse(
-      { character, candidates, threadsRead: dossier.threads.length },
+      {
+        character,
+        candidates,
+        threadsRead: dossier.threads.length,
+        motifsRead: dossier.motifs.length,
+        motifs: dossier.motifs.map((m) => ({
+          term: m.term,
+          mentions: m.mentions,
+          topicCount: m.topicCount,
+          spanDays: m.spanDays,
+          silentDays: m.silentDays,
+          salience: m.salience,
+        })),
+      },
       { origin }
     );
   } catch (err) {
