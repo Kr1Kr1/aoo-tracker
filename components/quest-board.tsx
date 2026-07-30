@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { QuestMissive } from '@/components/quest-missive';
+import { QuestEnrich } from '@/components/quest-enrich';
 import {
   CHANNEL_LABEL,
   OPEN_STATUSES,
@@ -536,6 +537,7 @@ export function QuestBoard({
                 call(`/api/quests/${quest.id}`, { method: 'PATCH', body: JSON.stringify({ status }) })
               }
               onDelete={() => call(`/api/quests/${quest.id}`, { method: 'DELETE' })}
+              onRefresh={() => router.refresh()}
             />
           )
         )}
@@ -551,6 +553,7 @@ function QuestCard({
   onEdit,
   onStatus,
   onDelete,
+  onRefresh,
 }: {
   quest: QuestView;
   busy: boolean;
@@ -558,6 +561,7 @@ function QuestCard({
   onEdit: () => void;
   onStatus: (status: QuestStatus) => void;
   onDelete: () => void;
+  onRefresh: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
 
@@ -696,11 +700,14 @@ function QuestCard({
           </div>
         )}
 
-        <QuestMissive
-          questId={quest.id}
-          actors={quest.actors.map((actor) => actor.name)}
-          nextStep={quest.nextStep}
-        />
+        <div className="flex flex-wrap items-center gap-1">
+          <QuestMissive
+            questId={quest.id}
+            actors={quest.actors.map((actor) => actor.name)}
+            nextStep={quest.nextStep}
+          />
+          <QuestEnrich quest={quest} busy={busy} onApplied={onRefresh} />
+        </div>
       </CardContent>
     </Card>
   );
