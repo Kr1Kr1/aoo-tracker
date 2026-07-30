@@ -13,6 +13,8 @@ import {
   Trophy,
   Mail,
   Wrench,
+  Share2,
+  ScrollText,
 } from "lucide-react";
 import {
   Breadcrumb,
@@ -78,6 +80,14 @@ function DesktopNav() {
 
         <NavItem href="/rankings" label="Rankings">
           <Trophy className="h-5 w-5" />
+        </NavItem>
+
+        <NavItem href="/relations" label="Relations">
+          <Share2 className="h-5 w-5" />
+        </NavItem>
+
+        <NavItem href="/quests" label="Quêtes">
+          <ScrollText className="h-5 w-5" />
         </NavItem>
 
         {/* Forum Section */}
@@ -177,6 +187,22 @@ function MobileNav() {
           >
             <Trophy className="h-5 w-5" />
             Rankings
+          </Link>
+
+          <Link
+            href="/relations"
+            className="flex items-center gap-4 px-2.5 text-muted-foreground hover:text-foreground"
+          >
+            <Share2 className="h-5 w-5" />
+            Relations
+          </Link>
+
+          <Link
+            href="/quests"
+            className="flex items-center gap-4 px-2.5 text-muted-foreground hover:text-foreground"
+          >
+            <ScrollText className="h-5 w-5" />
+            Quêtes
           </Link>
 
           {/* Forum Section */}

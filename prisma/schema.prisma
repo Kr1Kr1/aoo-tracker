@@ -57,6 +57,8 @@ model Characters {
   messages     Messages[]
   topics       Topics[]
   users        User[]
+  quests       Quest[]
+  questRoles   QuestActor[]         @relation("QuestActors")
 
   @@index([targetId])
   @@index([coordsId])
@@ -148,16 +150,17 @@ model Forums {
 }
 
 model Topics {
-  id        Int        @id @default(autoincrement())
+  id        Int          @id @default(autoincrement())
   name      String
-  link      String     @unique
+  link      String       @unique
   authorId  Int
   forumId   Int
-  closed    Boolean    @default(false)
-  updatedAt DateTime   @updatedAt
+  closed    Boolean      @default(false)
+  updatedAt DateTime     @updatedAt
   messages  Messages[]
-  forum     Forums     @relation(fields: [forumId], references: [id])
-  author    Characters @relation(fields: [authorId], references: [id])
+  forum     Forums       @relation(fields: [forumId], references: [id])
+  author    Characters   @relation(fields: [authorId], references: [id])
+  quests    QuestTopic[]
 }
 
 model Messages {
@@ -169,6 +172,58 @@ model Messages {
   topicId     Int
   topic       Topics     @relation(fields: [topicId], references: [id])
   character   Characters @relation(fields: [characterId], references: [id])
+}
+
+// ─── Quêtes ───────────────────────────────────────────────────────────
+// Intrigues sans résolution qu'un personnage suit, ou dans lesquelles il
+// pourrait vouloir s'impliquer. Rien ici n'est scrapé : une quête est soit
+// saisie à la main, soit issue d'une détection IA validée par l'auteur
+// (`origin`). Le fil de discussion reste la source, la quête n'en est que
+// la lecture narrative.
+
+model Quest {
+  id          Int          @id @default(autoincrement())
+  characterId Int                             // le carnet de quêtes de qui
+  title       String
+  summary     String?                         // l'intrigue, en quelques lignes
+  stake       String?                         // enjeu : pourquoi ce personnage s'en mêle
+  nextStep    String?                         // prochaine action concrète
+  status      String       @default("lead")   // lead | engaged | waiting | closed | dismissed
+  origin      String       @default("manual") // manual | ai
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  character   Characters   @relation(fields: [characterId], references: [id])
+  topics      QuestTopic[]
+  actors      QuestActor[]
+
+  @@index([characterId])
+  @@index([status])
+}
+
+// Un fil (RP, missive, forum privé) qui porte l'intrigue. La fraîcheur de la
+// quête se lit sur le dernier message de ces fils, jamais sur updatedAt.
+model QuestTopic {
+  id      Int     @id @default(autoincrement())
+  questId Int
+  topicId Int
+  note    String?
+  quest   Quest   @relation(fields: [questId], references: [id], onDelete: Cascade)
+  topic   Topics  @relation(fields: [topicId], references: [id])
+
+  @@unique([questId, topicId])
+  @@index([topicId])
+}
+
+model QuestActor {
+  id          Int        @id @default(autoincrement())
+  questId     Int
+  characterId Int
+  role        String?                          // "commanditaire", "témoin", "adversaire"…
+  quest       Quest      @relation(fields: [questId], references: [id], onDelete: Cascade)
+  character   Characters @relation("QuestActors", fields: [characterId], references: [id])
+
+  @@unique([questId, characterId])
+  @@index([characterId])
 }
 
 // ─── Map ──────────────────────────────────────────────────────────────
