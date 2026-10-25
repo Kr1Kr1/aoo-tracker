@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { QuestMissive } from '@/components/quest-missive';
 import { QuestEnrich } from '@/components/quest-enrich';
+import { DictatedTextarea, DictationButton } from '@/components/dictation';
 import {
   CHANNEL_LABEL,
   OPEN_STATUSES,
@@ -351,6 +352,7 @@ export function QuestBoard({
           placeholder="Consigne de détection (optionnel) : ex. « uniquement les dettes et promesses »"
           className="h-8 max-w-xl text-xs"
         />
+        <DictationButton value={instructions} onChange={setInstructions} />
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
@@ -363,10 +365,10 @@ export function QuestBoard({
           <CardContent className="space-y-4">
             <div className="rounded border border-dashed bg-muted/30 p-3">
               <label className={labelClass}>Dictez-la en clair, les champs se remplissent ensuite</label>
-              <textarea
+              <DictatedTextarea
                 className={`${fieldClass} mt-1 min-h-24`}
                 value={dictation}
-                onChange={(e) => setDictation(e.target.value)}
+                onChange={setDictation}
                 placeholder="Ex. : « Ça fait des mois que je cherche Zeus. Memestra a laissé tomber, il me reste la piste de Leyrion sur le disque solaire. Je dois lui réécrire. »"
               />
               <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -564,16 +566,39 @@ function QuestCard({
   onRefresh: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  // Le carnet se lit d'abord de haut : titre, statut, ce qui se joue, ce qu'il
+  // reste à faire. Les fils, les acteurs et la trace sont le dossier derrière,
+  // qu'on ouvre quête par quête. Replié par défaut : à dix quêtes ouvertes,
+  // tout déplier ne se lit plus.
+  const [open, setOpen] = useState(false);
 
   // Une quête engagée dont les fils se sont tus depuis longtemps est le vrai
   // signal du carnet : c'est là qu'une relance se perd.
   const stale = quest.staleDays !== null && quest.staleDays >= 14 && quest.status !== 'closed';
 
+  const detailCount = [
+    quest.topics.length > 0 && `${quest.topics.length} fil${quest.topics.length > 1 ? 's' : ''}`,
+    quest.actors.length > 0 && `${quest.actors.length} acteur${quest.actors.length > 1 ? 's' : ''}`,
+    quest.anchors.length > 0 &&
+      `${quest.anchors.length} trace${quest.anchors.length > 1 ? 's' : ''}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
   return (
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 pb-2">
-        <div className="min-w-0 flex-1">
+        <button
+          type="button"
+          onClick={() => setOpen((was) => !was)}
+          aria-expanded={open}
+          aria-controls={`quest-details-${quest.id}`}
+          className="min-w-0 flex-1 text-left"
+        >
           <div className="flex flex-wrap items-center gap-2">
+            <span aria-hidden className="text-xs text-muted-foreground">
+              {open ? '▾' : '▸'}
+            </span>
             <span
               className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${QUEST_STATUS_COLOR[quest.status]}`}
             >
@@ -593,34 +618,20 @@ function QuestCard({
               : `dernier mouvement le ${quest.lastLabel} (${quest.staleDays} j)`}
             {stale && <span className="ml-1 text-orange-600">· en sommeil</span>}
           </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={quest.status}
-            disabled={busy}
-            onChange={(e) => onStatus(e.target.value as QuestStatus)}
-            className="h-8 rounded border bg-background px-2 text-xs"
-            title={QUEST_STATUS_HINT[quest.status]}
-          >
-            {QUEST_STATUSES.map((status) => (
-              <option key={status} value={status}>
-                {QUEST_STATUS_LABEL[status]}
-              </option>
-            ))}
-          </select>
-          <Button size="sm" variant="outline" onClick={onEdit}>
-            Modifier
-          </Button>
-          {confirming ? (
-            <Button size="sm" variant="outline" disabled={busy} onClick={onDelete} className="text-red-600">
-              Confirmer
-            </Button>
-          ) : (
-            <Button size="sm" variant="ghost" onClick={() => setConfirming(true)}>
-              Supprimer
-            </Button>
-          )}
-        </div>
+        </button>
+        <select
+          value={quest.status}
+          disabled={busy}
+          onChange={(e) => onStatus(e.target.value as QuestStatus)}
+          className="h-8 rounded border bg-background px-2 text-xs"
+          title={QUEST_STATUS_HINT[quest.status]}
+        >
+          {QUEST_STATUSES.map((status) => (
+            <option key={status} value={status}>
+              {QUEST_STATUS_LABEL[status]}
+            </option>
+          ))}
+        </select>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         {quest.summary && <p className="whitespace-pre-wrap">{quest.summary}</p>}
@@ -637,6 +648,24 @@ function QuestCard({
           </p>
         )}
 
+        {!open && (
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            aria-expanded={false}
+            aria-controls={`quest-details-${quest.id}`}
+            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+          >
+            ▸ Le dossier{detailCount && ` : ${detailCount}`}
+          </button>
+        )}
+      </CardContent>
+
+      <CardContent
+        id={`quest-details-${quest.id}`}
+        hidden={!open}
+        className="space-y-2 border-t pt-3 text-sm"
+      >
         {quest.topics.length > 0 && (
           <ul className="space-y-1 text-xs">
             {quest.topics.map((topic) => (
@@ -707,6 +736,24 @@ function QuestCard({
             nextStep={quest.nextStep}
           />
           <QuestEnrich quest={quest} busy={busy} onApplied={onRefresh} />
+          <Button size="sm" variant="ghost" onClick={onEdit}>
+            Modifier
+          </Button>
+          {confirming ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={onDelete}
+              className="text-red-600"
+            >
+              Confirmer
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={() => setConfirming(true)}>
+              Supprimer
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -771,19 +818,19 @@ function QuestForm({
       <div className="grid gap-3 md:grid-cols-2">
         <div>
           <label className={labelClass}>L&apos;intrigue</label>
-          <textarea
+          <DictatedTextarea
             className={`${fieldClass} min-h-20`}
             value={draft.summary}
-            onChange={(e) => set('summary', e.target.value)}
+            onChange={(next) => set('summary', next)}
             placeholder="Les faits, et ce qui reste sans réponse"
           />
         </div>
         <div>
           <label className={labelClass}>Enjeu</label>
-          <textarea
+          <DictatedTextarea
             className={`${fieldClass} min-h-20`}
             value={draft.stake}
-            onChange={(e) => set('stake', e.target.value)}
+            onChange={(next) => set('stake', next)}
             placeholder="Pourquoi s'en mêler, ou pourquoi ça pourrait tenter"
           />
         </div>

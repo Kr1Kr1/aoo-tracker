@@ -11,6 +11,10 @@
 // the ingestion route uses, keeping the highest id: the most recent scrape, so
 // posts edited between two syncs keep their latest version.
 //
+// Quests point at topics (QuestTopic) and at messages (QuestMessage, deleted in
+// cascade with its message): both are moved onto the surviving row first, so a
+// merge never loses a quest's anchors.
+//
 // Usage: node scripts/mergeTopicDuplicates.mjs [--apply]
 //        (dry run by default)
 
@@ -79,6 +83,10 @@ async function main() {
     const keepByKey = new Map();
     for (const m of messages) keepByKey.set(`${m.date}|${m.characterId}`, m.id);
     const keep = new Set(keepByKey.values());
+    // Where each dropped message's quest anchors must land.
+    const survivorOf = new Map(
+      messages.map((m) => [m.id, keepByKey.get(`${m.date}|${m.characterId}`)])
+    );
     const toMove = messages.filter((m) => keep.has(m.id) && m.id !== undefined);
     const toDrop = messages.filter((m) => !keep.has(m.id));
 
@@ -95,6 +103,25 @@ async function main() {
     }
 
     await prisma.$transaction(async (tx) => {
+      for (const link of await tx.questMessage.findMany({
+        where: { messageId: { in: toDrop.map((m) => m.id) } },
+      })) {
+        const target = survivorOf.get(link.messageId);
+        const exists = await tx.questMessage.findFirst({
+          where: { questId: link.questId, messageId: target },
+        });
+        if (exists) await tx.questMessage.delete({ where: { id: link.id } });
+        else await tx.questMessage.update({ where: { id: link.id }, data: { messageId: target } });
+      }
+      for (const link of await tx.questTopic.findMany({
+        where: { topicId: { in: others.map((t) => t.id) } },
+      })) {
+        const exists = await tx.questTopic.findFirst({
+          where: { questId: link.questId, topicId: canonical.id },
+        });
+        if (exists) await tx.questTopic.delete({ where: { id: link.id } });
+        else await tx.questTopic.update({ where: { id: link.id }, data: { topicId: canonical.id } });
+      }
       if (toDrop.length > 0) {
         await tx.messages.deleteMany({ where: { id: { in: toDrop.map((m) => m.id) } } });
       }

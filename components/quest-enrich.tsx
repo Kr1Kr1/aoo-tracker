@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DictationButton } from '@/components/dictation';
 import { QUEST_STATUS_LABEL, type QuestStatus, type QuestView } from '@/lib/questStatus';
 
 type Proposal = {
@@ -33,11 +34,20 @@ type Proposal = {
   unknownActors: string[];
 };
 
+type Scanned = { messages: number; topics: number };
+
+/**
+ * L'attente se joue en deux temps : la recherche dans le corpus, puis la
+ * rédaction. Le serveur annonce la fin du premier (cf. la route enrich, qui
+ * répond en NDJSON), ce que `progress` garde pour l'afficher pendant le second.
+ */
+type Progress = { scanned: Scanned; terms: string[]; threads: number };
+
 type State =
   | { status: 'idle' }
-  | { status: 'loading' }
+  | { status: 'loading'; progress: Progress | null }
   | { status: 'error'; message: string }
-  | { status: 'done'; proposal: Proposal | null; scanned: { messages: number; topics: number } };
+  | { status: 'done'; proposal: Proposal | null; scanned: Scanned };
 
 const labelClass = 'text-xs font-medium text-muted-foreground';
 
@@ -56,19 +66,63 @@ export function QuestEnrich({
   const [applying, setApplying] = useState(false);
 
   async function rescan() {
-    setState({ status: 'loading' });
+    setState({ status: 'loading', progress: null });
     try {
       const res = await fetch(`/api/quests/${quest.id}/enrich`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ instructions: instructions.trim() || undefined }),
       });
-      const data = await res.json();
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
         setState({ status: 'error', message: data.error || `Erreur ${res.status}` });
         return;
       }
-      setState({ status: 'done', proposal: data.proposal, scanned: data.scanned });
+
+      // NDJSON : une ligne complète = un événement. On lit au fil de l'eau, en
+      // gardant le reliquat entre deux morceaux, car rien ne garantit qu'un
+      // chunk réseau s'arrête sur une fin de ligne.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let handled = false;
+
+      const handle = (line: string) => {
+        const event = JSON.parse(line);
+        if (event.type === 'scanned') {
+          setState({
+            status: 'loading',
+            progress: { scanned: event.scanned, terms: event.terms, threads: event.threads },
+          });
+        } else if (event.type === 'done') {
+          handled = true;
+          setState({ status: 'done', proposal: event.proposal, scanned: event.scanned });
+        } else if (event.type === 'error') {
+          handled = true;
+          setState({ status: 'error', message: event.error || 'Erreur inconnue' });
+        }
+      };
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let cut = buffer.indexOf('\n');
+        while (cut >= 0) {
+          const line = buffer.slice(0, cut).trim();
+          buffer = buffer.slice(cut + 1);
+          if (line) handle(line);
+          cut = buffer.indexOf('\n');
+        }
+      }
+      const rest = buffer.trim();
+      if (rest) handle(rest);
+
+      // Flux coupé avant le mot de la fin : serveur redémarré, onglet en
+      // veille, requête abandonnée. Le dire vaut mieux que laisser tourner.
+      if (!handled) {
+        setState({ status: 'error', message: 'Relecture interrompue avant la fin' });
+      }
     } catch {
       setState({ status: 'error', message: 'Erreur réseau' });
     }
@@ -134,7 +188,10 @@ export function QuestEnrich({
   }
 
   return (
-    <div className="mt-2 space-y-3 rounded border border-dashed bg-muted/30 p-3">
+    // w-full : le panneau vit dans la rangée de boutons du dossier, en flex-wrap.
+    // Sans ça, il se serre entre « Écrire une missive » et « Modifier » ; avec,
+    // il prend sa propre ligne.
+    <div className="mt-2 w-full space-y-3 rounded border border-dashed bg-muted/30 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-muted-foreground">
           Relire RP, forums privés et missives à la recherche de cette quête
@@ -151,10 +208,31 @@ export function QuestEnrich({
           placeholder="Consigne (optionnel) : ex. « concentre-toi sur ce que disent les nains »"
           className="h-8 max-w-md text-xs"
         />
+        <DictationButton value={instructions} onChange={setInstructions} />
         <Button size="sm" variant="outline" onClick={rescan} disabled={state.status === 'loading'}>
-          {state.status === 'loading' ? '🔎 Relecture en cours…' : '🔎 Relire'}
+          {state.status === 'loading'
+            ? state.progress
+              ? '✍️ Rédaction en cours…'
+              : '🔎 Lecture des échanges…'
+            : '🔎 Relire'}
         </Button>
       </div>
+
+      {state.status === 'loading' && (
+        <p aria-live="polite" className="text-xs text-muted-foreground">
+          {state.progress
+            ? `${state.progress.scanned.messages} messages relus dans ${state.progress.scanned.topics} fils, ` +
+              `${state.progress.threads} retenu${state.progress.threads > 1 ? 's' : ''} : ` +
+              'le modèle rédige la fiche, comptez une à deux minutes.'
+            : 'Recherche dans les RP, forums privés et missives lisibles par le compte…'}
+        </p>
+      )}
+
+      {state.status === 'loading' && state.progress && state.progress.terms.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Recherche menée sur : {state.progress.terms.join(', ')}.
+        </p>
+      )}
 
       {state.status === 'error' && <p className="text-sm text-red-600">{state.message}</p>}
 
