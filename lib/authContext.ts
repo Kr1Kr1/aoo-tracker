@@ -19,14 +19,24 @@ export interface CallerContext {
   actingAsTargetId: number | null;
 }
 
+// Un `Authorization: Bearer` explicite prime sur le cookie `auth-token` :
+// un client comme l'extension porte sa propre identité et ne doit pas
+// hériter, par le hasard du navigateur qui l'exécute, de la session web de
+// quelqu'un d'autre restée logguée sur le même profil Chrome.
 function tokenFromRequest(request: Request): string | null {
+  const headerToken = request.headers.get("authorization")?.split(" ")[1];
+  if (headerToken) return headerToken;
   const cookieHeader = request.headers.get("cookie") || "";
   const cookieMatch = cookieHeader.match(/(?:^|;\s*)auth-token=([^;]+)/);
-  const headerToken = request.headers.get("authorization")?.split(" ")[1];
-  return cookieMatch?.[1] || headerToken || null;
+  return cookieMatch?.[1] || null;
 }
 
+// "acting as" est un état d'UI propre à une session de navigateur : pour un
+// appelant qui s'authentifie par header (pas par cookie), un cookie
+// `acting-as` laissé par une autre session sur le même navigateur ne doit
+// pas venir restreindre silencieusement son accès.
 function actingAsFromRequest(request: Request): number | null {
+  if (request.headers.get("authorization")) return null;
   const cookieHeader = request.headers.get("cookie") || "";
   const match = cookieHeader.match(/(?:^|;\s*)acting-as=([^;]+)/);
   if (!match) return null;
