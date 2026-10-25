@@ -33,7 +33,8 @@ const STOPWORDS = new Set([
 
 const WORD = /[\p{L}][\p{L}'’-]{2,}/gu;
 
-function tokenize(text: string): string[] {
+/** Mots retenus d'un texte : sans accents, sans mots vides, sans mots courts. */
+export function tokenize(text: string): string[] {
   const tokens: string[] = [];
   for (const match of text.matchAll(WORD)) {
     const folded = foldName(match[0]);

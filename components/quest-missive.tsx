@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DictatedTextarea } from '@/components/dictation';
 
 type Draft = { subject: string; body: string; angle: string };
 
@@ -87,10 +88,10 @@ export function QuestMissive({
         </Button>
       </div>
 
-      <textarea
+      <DictatedTextarea
         className="min-h-16 w-full rounded border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
         value={intent}
-        onChange={(e) => setIntent(e.target.value)}
+        onChange={setIntent}
         placeholder={
           nextStep
             ? `Ce que vous voulez faire (optionnel). Sans rien, la missive sert : « ${nextStep} »`

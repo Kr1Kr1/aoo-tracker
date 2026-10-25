@@ -11,7 +11,8 @@ import { claudeCode } from 'ai-sdk-provider-claude-code';
 import { renderVoiceSamples } from '@/lib/ai/voiceSamples';
 import type { TranscriptMessage } from '@/lib/ai/draftReplies';
 
-const MissivesSchema = z.object({
+/** Le brouillon de missive, quelle que soit la porte d'entrée (quête ou fil neuf). */
+export const MissivesSchema = z.object({
   drafts: z
     .array(
       z.object({

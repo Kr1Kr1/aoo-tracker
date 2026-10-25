@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DictatedTextarea } from "@/components/dictation";
 
 type DraftState =
   | { status: "idle" }
@@ -46,22 +46,21 @@ export function DraftReplies({ topicId }: { topicId: number }) {
 
   return (
     <div className="mt-3 space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          value={instructions}
-          onChange={(e) => setInstructions(e.target.value)}
-          placeholder="Consigne (optionnel) : ex. « décliner poliment », « proposer un rendez-vous »…"
-          className="h-8 max-w-md text-xs"
-        />
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={generate}
-          disabled={state.status === "loading"}
-        >
-          {state.status === "loading" ? "✒️ Rédaction en cours…" : "✒️ Proposer des réponses"}
-        </Button>
-      </div>
+      <DictatedTextarea
+        value={instructions}
+        onChange={setInstructions}
+        placeholder="Consigne (optionnel) : ex. « décliner poliment », « proposer un rendez-vous »…"
+        className="min-h-48 w-full resize-y rounded border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+      />
+
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={generate}
+        disabled={state.status === "loading"}
+      >
+        {state.status === "loading" ? "✒️ Rédaction en cours…" : "✒️ Proposer des réponses"}
+      </Button>
 
       {state.status === "error" && (
         <p className="text-sm text-red-600">{state.message}</p>

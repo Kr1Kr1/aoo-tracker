@@ -5,17 +5,23 @@ import { getCallerContextFromCookies, visibleMissiveTopicIds } from '@/lib/authC
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { foldName } from '@/lib/questMotifs';
 import { sanitizeForumHtml } from '@/lib/sanitizeForumHtml';
 import { MissiveThread } from '@/components/missive-thread';
+import { NewMissive } from '@/components/new-missive';
 import { formatMessageDate, messageTime, sortMessagesChronologically } from '@/lib/messageDate';
 
 interface PageProps {
-  searchParams: Promise<{ filter?: string; sort?: string; page?: string }>;
+  searchParams: Promise<{ filter?: string; sort?: string; page?: string; q?: string }>;
 }
 
 // Threads are rendered in full, so the list itself is paginated: an admin sees
 // every missive of the game and the whole set at once weighs several MB.
 const TOPICS_PER_PAGE = 20;
+
+/** Assez de correspondants pour couvrir les habitués, pas de quoi noyer la barre. */
+const CORRESPONDENTS_SUGGESTED = 12;
 
 const STATUS_LABEL: Record<string, string> = {
   needs_reply: '🔴 À répondre',
@@ -58,6 +64,7 @@ export default async function MissivesPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const filter = params.filter || 'all';
   const sort = params.sort === 'oldest' ? 'oldest' : 'newest';
+  const q = (params.q || '').trim();
 
   const charIdSet = new Set(ctx.characterIds);
 
@@ -102,24 +109,65 @@ export default async function MissivesPage({ searchParams }: PageProps) {
     sort === 'newest' ? b.lastActivity - a.lastActivity : a.lastActivity - b.lastActivity
   );
 
-  const matching = enriched.filter((t) => filter === 'all' || t.status === filter);
+  // Recherche dans le titre, sans casse ni accents : retrouver une missive sans
+  // dépiler les pages. Elle s'applique avant les compteurs, pour qu'ils disent
+  // combien de résultats attendent dans chaque onglet.
+  const needle = foldName(q);
+  const searched = needle ? enriched.filter((t) => foldName(t.name).includes(needle)) : enriched;
+
+  const matching = searched.filter((t) => filter === 'all' || t.status === filter);
 
   const pageCount = Math.max(1, Math.ceil(matching.length / TOPICS_PER_PAGE));
   const page = Math.min(Math.max(parseInt(params.page || '1', 10) || 1, 1), pageCount);
   const filtered = matching.slice((page - 1) * TOPICS_PER_PAGE, page * TOPICS_PER_PAGE);
   const href = (next: { filter?: string; sort?: string; page?: number }) =>
-    `?filter=${next.filter ?? filter}&sort=${next.sort ?? sort}&page=${next.page ?? 1}`;
+    `?filter=${next.filter ?? filter}&sort=${next.sort ?? sort}&page=${next.page ?? 1}` +
+    (q ? `&q=${encodeURIComponent(q)}` : '');
+
+  // Les correspondants déjà connus, du plus récent au plus ancien : ce sont eux
+  // qu'on veut proposer d'un clic quand on ouvre une missive neuve.
+  const correspondents: string[] = [];
+  const seenCorrespondents = new Set<string>();
+  for (const topic of [...enriched].sort((a, b) => b.lastActivity - a.lastActivity)) {
+    for (const message of topic.messages) {
+      const name = message.character.name;
+      if (charIdSet.has(message.character.id) || seenCorrespondents.has(name)) continue;
+      seenCorrespondents.add(name);
+      correspondents.push(name);
+    }
+  }
 
   const counts = {
-    all: enriched.length,
-    needs_reply: enriched.filter((t) => t.status === 'needs_reply').length,
-    waiting: enriched.filter((t) => t.status === 'waiting').length,
-    closed: enriched.filter((t) => t.status === 'closed').length,
+    all: searched.length,
+    needs_reply: searched.filter((t) => t.status === 'needs_reply').length,
+    waiting: searched.filter((t) => t.status === 'waiting').length,
+    closed: searched.filter((t) => t.status === 'closed').length,
   };
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
       <h1 className="text-2xl font-bold">Missives</h1>
+
+      {/* Ouvrir un fil : le seul geste que la page ne savait pas faire. */}
+      <NewMissive correspondents={correspondents.slice(0, CORRESPONDENTS_SUGGESTED)} />
+
+      <form method="get" className="flex items-center gap-2">
+        <input type="hidden" name="filter" value={filter} />
+        <input type="hidden" name="sort" value={sort} />
+        <Input
+          type="search"
+          name="q"
+          defaultValue={q}
+          placeholder="Chercher dans les titres…"
+          className="max-w-sm"
+        />
+        <Button type="submit" variant="outline" size="sm">Chercher</Button>
+        {q && (
+          <a href={`?filter=${filter}&sort=${sort}`}>
+            <Button type="button" variant="ghost" size="sm">Effacer</Button>
+          </a>
+        )}
+      </form>
 
       <div className="flex flex-wrap items-center gap-3">
         <Tabs value={filter} className="w-fit">
@@ -141,7 +189,10 @@ export default async function MissivesPage({ searchParams }: PageProps) {
       </div>
 
       {matching.length === 0 && (
-        <p className="text-muted-foreground">Aucune missive {filter !== 'all' && `dans cette catégorie`}.</p>
+        <p className="text-muted-foreground">
+          Aucune missive{q && ` dont le titre contient « ${q} »`}
+          {filter !== 'all' && ` dans cette catégorie`}.
+        </p>
       )}
 
       {pageCount > 1 && (
