@@ -413,6 +413,43 @@ model MapPlants {
   @@index([coordsId])
 }
 
+// Point d'observation d'un arpentage automatique (voir /api/explore) : d'où
+// le personnage a regardé, et jusqu'où portait sa perception. Sans ça, une
+// case vide (mer, hors monde) ne laisse aucune trace dans Coords et resterait
+// « inconnue » à jamais : l'arpenteuse reviendrait sans fin sur la côte.
+model SurveyPoint {
+  id      Int      @id @default(autoincrement())
+  plan    String
+  z       Int      @default(0)
+  x       Int
+  y       Int
+  radius  Int
+  ownerId Int?
+  at      DateTime @default(now())
+
+  @@unique([plan, z, x, y, radius])
+  @@index([plan, z])
+}
+
+// Passage (téléporteur) d'une case vers un autre plan ou un autre niveau :
+// la topologie du monde, importée une fois depuis la base du moteur local
+// (pnpm seed-portals). Sert aux repères sur la carte du jeu et à l'arpentage
+// automatique. toX/toY nulls = « inchangé » côté moteur.
+model PlanPortal {
+  id     Int    @id @default(autoincrement())
+  plan   String
+  z      Int    @default(0)
+  x      Int
+  y      Int
+  toPlan String
+  toZ    Int    @default(0)
+  toX    Int?
+  toY    Int?
+
+  @@unique([plan, z, x, y, toPlan, toZ])
+  @@index([plan, z])
+}
+
 model MapSnapshot {
   id         Int                @id @default(autoincrement())
   capturedAt DateTime           @unique

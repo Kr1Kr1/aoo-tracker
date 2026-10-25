@@ -10,8 +10,40 @@ export function corsHeaders(origin?: string | null): HeadersInit {
   return {
     "Access-Control-Allow-Origin": allowed,
     "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-AOO-Source",
   };
+}
+
+// The local engine (docker, cf. aoo-engine on http://localhost:9000) is a copy
+// of the game, not the game: its characters, forums and stats are dev data.
+// Walking it still reveals real cartography, so the extension may scrape its
+// map, and nothing else. Requests carrying that scrape are tagged with the
+// header below (the extension posts from its service worker, so the Origin
+// header says nothing about where the data came from). The middleware refuses
+// every route but the map ingest, and the ingest itself only accepts the
+// characters allowed to survey the local engine.
+export const SOURCE_HEADER = "x-aoo-source";
+export const LOCAL_ENGINE_SOURCE = "local-engine";
+/** Medarda, rouette, Omik et Neige : les seules personas dont la cartographie du moteur local est fiable. */
+export const LOCAL_ENGINE_TARGET_IDS = [232, -260, -282, -9];
+/**
+ * Map ingest, plus the asset mirror the freshly seen tiles need to render.
+ * The mirror is safe to open: it only ever downloads from the game's own CDN
+ * (strict allowlist in app/api/assets), never from the local engine.
+ * /api/explore : l'arpentage automatique du moteur local (où aller, et
+ * renouveler le tour), qui ne lit que la carte et n'écrit que des points
+ * d'observation.
+ */
+export const LOCAL_ENGINE_PATHS = [
+  "/api/maps",
+  "/api/assets",
+  "/api/explore/next",
+  "/api/explore/new-turn",
+  "/api/explore/portals",
+];
+
+export function isLocalEngineRequest(request: { headers: Headers }): boolean {
+  return request.headers.get(SOURCE_HEADER) === LOCAL_ENGINE_SOURCE;
 }
 
 export function jsonResponse(

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import * as jose from "jose";
+import { isLocalEngineRequest, LOCAL_ENGINE_PATHS } from "@/lib/api";
 
 if (!process.env.JWT_SECRET) {
   throw new Error("JWT_SECRET environment variable is required");
@@ -9,6 +10,13 @@ const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Scrapes of the local engine feed the map and nothing else (see lib/api.ts).
+  // Enforced here rather than route by route: a payload from a dev copy of the
+  // game must never reach an ingest route, whatever token it carries.
+  if (isLocalEngineRequest(request) && !LOCAL_ENGINE_PATHS.includes(pathname)) {
+    return new NextResponse("Local engine may only feed the map", { status: 403 });
+  }
 
   if (
     pathname === "/login" ||
