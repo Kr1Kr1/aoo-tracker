@@ -59,6 +59,7 @@ model Characters {
   users        User[]
   quests       Quest[]
   questRoles   QuestActor[]         @relation("QuestActors")
+  combatAssignment CombatAssignment?
 
   @@index([targetId])
   @@index([coordsId])
@@ -450,5 +451,49 @@ model User {
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
   characters Characters[]
+}
+
+// Événement de combat de guilde (ex: dragons) : liste de monstres avec leurs
+// caracs, et pour chaque joueur le monstre qu'il a déclaré affronter + une
+// heure de tour de référence. Les tours du jeu durent 18h : à partir de cette
+// heure de référence, le front calcule les prochains tours (+18h, +36h, ...).
+// Accès public en lecture/écriture (pas d'auth) : outil de coordination
+// éphémère utilisé en direct par toute la guilde, pas seulement les
+// personnages liés au compte admin.
+model Monster {
+  id          Int                @id @default(autoincrement())
+  name        String
+  imageUrl    String?
+  cc          Int?
+  ct          Int?
+  f           Int?
+  e           Int?
+  agi         Int?
+  pv          Int?
+  pm          Int?
+  fm          Int?
+  m           Int?
+  a           Int?
+  mvt         Int?
+  p           Int?
+  r           Int?
+  rm          Int?
+  notes       String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  assignments CombatAssignment[]
+}
+
+model CombatAssignment {
+  id          Int        @id @default(autoincrement())
+  characterId Int        @unique
+  character   Characters @relation(fields: [characterId], references: [id])
+  monsterId   Int?
+  monster     Monster?   @relation(fields: [monsterId], references: [id])
+  turnTime    DateTime?
+  note        String?
+  updatedAt   DateTime   @updatedAt
+
+  @@index([monsterId])
 }
 
