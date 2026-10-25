@@ -18,6 +18,7 @@
     "merge-topic-duplicates": "node scripts/mergeTopicDuplicates.mjs",
     "normalize-message-dates": "node scripts/normalizeMessageDates.mjs",
     "seed-plans": "node scripts/seedPlans.mjs",
+    "archive-season": "node scripts/archiveSeason.mjs",
     "seed-portals": "node scripts/seedPortals.mjs"
   },
   "dependencies": {

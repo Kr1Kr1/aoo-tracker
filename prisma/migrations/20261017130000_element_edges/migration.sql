@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "MapElements" ADD COLUMN "edge" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "MapElements" ADD COLUMN "half" TEXT;

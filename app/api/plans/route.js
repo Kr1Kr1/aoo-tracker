@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { jsonResponse, errorResponse, preflight } from "@/lib/api";
 import { getCallerContext } from "@/lib/authContext";
+import { CURRENT_SEASON } from "@/lib/season";
 
 // Returns metadata for all known plans + the list of plans that have at
 // least one Coords row (i.e. plans that have been actually scraped).
@@ -102,7 +103,7 @@ export async function GET(request) {
       });
     }
 
-    return jsonResponse({ plans: enriched }, { origin });
+    return jsonResponse({ plans: enriched, currentSeason: CURRENT_SEASON }, { origin });
   } catch (err) {
     logger.error(`Error fetching plans: ${err.message}`, { stack: err.stack });
     return errorResponse("Internal Server Error", 500, origin);

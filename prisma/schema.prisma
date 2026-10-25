@@ -254,6 +254,10 @@ model QuestActor {
 // no FK so unknown plans don't break ingest.
 model Plan {
   name              String       @id          // "olympia", "cimes_geantes"
+  // Saison du plan, comme plans.season côté moteur. Une archive garde sa
+  // saison en suffixe (olympia_s2), le plan de la saison courante a le nom
+  // de base (voir lib/season.ts et scripts/archiveSeason.mjs).
+  season            Int?
   displayName       String                    // "Olympia", "Cimes Géantes"
   shortName         String?
   worldX            Int?                       // position in the global plan grid
@@ -351,6 +355,10 @@ model MapWalls {
   coordsId  Int
   playerId  Int?
   damages   Int         @default(0)
+  // Étendue en cases d'une image composée (bâtiment 2×2…), ancrée sur la
+  // case en haut à gauche : le jeu l'étire sur w×h cases.
+  w         Int         @default(1)
+  h         Int         @default(1)
   scrapedAt DateTime    @updatedAt
   player    Characters? @relation(fields: [playerId], references: [id])
   coords    Coords      @relation(fields: [coordsId], references: [id])
@@ -367,6 +375,15 @@ model MapElements {
   coordsId  Int
   endTime   Int      @default(0)
   opacity   Float    @default(1.0)
+  // Étendue en cases d'une image composée (bâtiment 2×2…), ancrée sur la
+  // case en haut à gauche : le jeu l'étire sur w×h cases.
+  w         Int         @default(1)
+  h         Int         @default(1)
+  // Fondu des éléments animés (eau, lave…) comme le jeu les peint : bits
+  // de bords fondus (1 N, 2 E, 4 S, 8 O) et de coins arrondis (16 NE, 32 SE,
+  // 64 SO, 128 NO), et demi-case en diagonale (« ESW », « WNE »…).
+  edge      Int         @default(0)
+  half      String?
   scrapedAt DateTime @updatedAt
   coords    Coords   @relation(fields: [coordsId], references: [id])
 
@@ -378,6 +395,10 @@ model MapForegrounds {
   id        Int      @id @default(autoincrement())
   name      String
   href      String?
+  // Étendue en cases d'une image composée (bâtiment 2×2…), ancrée sur la
+  // case en haut à gauche : le jeu l'étire sur w×h cases.
+  w         Int         @default(1)
+  h         Int         @default(1)
   coordsId  Int
   scrapedAt DateTime @updatedAt
   coords    Coords   @relation(fields: [coordsId], references: [id])

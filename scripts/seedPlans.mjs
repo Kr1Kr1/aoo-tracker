@@ -2,15 +2,28 @@
 // the Plan / PlanZLevel / PlanExit tables. Idempotent: re-runnable to
 // pick up new or modified plans.
 //
-// Usage:  node scripts/seedPlans.mjs [path-to-plans-dir]
+// Usage:  node scripts/seedPlans.mjs --season <n> [path-to-plans-dir]
 // Default path: /Users/kr1/age-of-olympia/aoo-engine/datas/private/plans
+//
+// --season est obligatoire : chaque plan semé est rangé dans cette saison.
+// Les JSON du moteur datent de la saison 2 ; les semer comme saison courante
+// recréerait sous leur nom de base des cartes qui sont désormais archivées
+// (voir scripts/archiveSeason.mjs).
 
 import { PrismaClient } from "@prisma/client";
 import { readdir, readFile } from "fs/promises";
 import path from "path";
 
 const DEFAULT_DIR = "/Users/kr1/age-of-olympia/aoo-engine/datas/private/plans";
-const dir = process.argv[2] || DEFAULT_DIR;
+const args = process.argv.slice(2);
+const seasonIdx = args.indexOf("--season");
+const season = seasonIdx >= 0 ? parseInt(args[seasonIdx + 1], 10) : NaN;
+if (!Number.isInteger(season) || season < 1) {
+  console.error("Usage: node scripts/seedPlans.mjs --season <n> [path-to-plans-dir]");
+  process.exit(1);
+}
+if (seasonIdx >= 0) args.splice(seasonIdx, 2);
+const dir = args[0] || DEFAULT_DIR;
 
 const prisma = new PrismaClient();
 
@@ -32,6 +45,7 @@ async function loadPlanJson(filePath) {
 async function seedPlan(name, json) {
   const data = {
     name,
+    season,
     displayName: json.name || name,
     shortName: json.shortName || null,
     worldX: typeof json.x === "number" ? json.x : null,
